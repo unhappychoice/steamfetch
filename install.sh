@@ -37,9 +37,19 @@ check_glibc_version() {
     fi
 }
 
+is_wsl() {
+    grep -qi microsoft /proc/version 2>/dev/null
+}
+
 detect_platform() {
     OS="$(uname -s)"
     ARCH="$(uname -m)"
+
+    # WSL -> Windows
+    if is_wsl; then
+        echo "x86_64-pc-windows-msvc"
+        return
+    fi
 
     case "$OS" in
         Linux*)
@@ -98,7 +108,12 @@ main() {
         curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/steamfetch.zip"
         unzip -q "$TEMP_DIR/steamfetch.zip" -d "$TEMP_DIR"
         rm "$TEMP_DIR/steamfetch.zip"
-        INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+        if is_wsl; then
+            WIN_USER=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r')
+            INSTALL_DIR="${INSTALL_DIR:-/mnt/c/Users/$WIN_USER/.local/bin}"
+        else
+            INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+        fi
     else
         DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/${BINARY_NAME}-${VERSION}-${PLATFORM}.tar.gz"
         echo "Downloading from $DOWNLOAD_URL..."
@@ -117,21 +132,34 @@ main() {
 
     echo "Successfully installed $BINARY_NAME to $INSTALL_DIR/"
     echo ""
-    echo "Make sure $INSTALL_DIR is in your PATH:"
-    if [[ "$PLATFORM" == *"windows"* ]]; then
-        echo "  Add $INSTALL_DIR to your PATH environment variable"
-    else
-        echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
-    fi
-    echo ""
-    echo "Setup Steam API key:"
-    echo "  1. Get your API key from: https://steamcommunity.com/dev/apikey"
-    echo "  2. Find your Steam ID from: https://steamid.io"
-    echo "  3. Set environment variables:"
-    if [[ "$PLATFORM" == *"windows"* ]]; then
+    if is_wsl; then
+        WIN_PATH=$(echo "$INSTALL_DIR" | sed 's|/mnt/c|C:|' | sed 's|/|\\|g')
+        echo "Add to Windows PATH:"
+        echo "  $WIN_PATH"
+        echo ""
+        echo "Setup Steam API key (Windows environment variables):"
+        echo "  1. Get your API key from: https://steamcommunity.com/dev/apikey"
+        echo "  2. Find your Steam ID from: https://steamid.io"
+        echo "  3. Set environment variables in Windows System Settings or:"
+        echo "     setx STEAM_API_KEY \"your_api_key\""
+        echo "     setx STEAM_ID \"your_steam_id\""
+    elif [[ "$PLATFORM" == *"windows"* ]]; then
+        echo "Make sure $INSTALL_DIR is in your PATH"
+        echo ""
+        echo "Setup Steam API key:"
+        echo "  1. Get your API key from: https://steamcommunity.com/dev/apikey"
+        echo "  2. Find your Steam ID from: https://steamid.io"
+        echo "  3. Set environment variables:"
         echo "     set STEAM_API_KEY=your_api_key"
         echo "     set STEAM_ID=your_steam_id"
     else
+        echo "Make sure $INSTALL_DIR is in your PATH:"
+        echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
+        echo ""
+        echo "Setup Steam API key:"
+        echo "  1. Get your API key from: https://steamcommunity.com/dev/apikey"
+        echo "  2. Find your Steam ID from: https://steamid.io"
+        echo "  3. Set environment variables:"
         echo "     export STEAM_API_KEY=\"your_api_key\""
         echo "     export STEAM_ID=\"your_steam_id\""
     fi
