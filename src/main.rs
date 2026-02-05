@@ -16,6 +16,10 @@ struct Cli {
     /// Show demo output with sample data
     #[arg(long)]
     demo: bool,
+
+    /// Show verbose output for debugging
+    #[arg(long, short)]
+    verbose: bool,
 }
 
 #[tokio::main]
@@ -25,16 +29,16 @@ async fn main() -> Result<()> {
     let stats = if cli.demo {
         demo_stats()
     } else {
-        fetch_stats().await?
+        fetch_stats(cli.verbose).await?
     };
 
     display::render(&stats);
     Ok(())
 }
 
-async fn fetch_stats() -> Result<steam::SteamStats> {
+async fn fetch_stats(verbose: bool) -> Result<steam::SteamStats> {
     // Try Steamworks SDK first, fallback to Web API
-    match NativeSteamClient::try_new() {
+    match NativeSteamClient::try_new(verbose) {
         Some(native) => fetch_native_stats(native).await,
         None => fetch_web_stats().await,
     }

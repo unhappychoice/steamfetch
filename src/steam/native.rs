@@ -88,14 +88,18 @@ pub struct NativeSteamClient {
 }
 
 impl NativeSteamClient {
-    pub fn try_new() -> Option<Self> {
+    pub fn try_new(verbose: bool) -> Option<Self> {
         let steam_path = match get_steam_client_path() {
             Some(p) => {
-                eprintln!("[debug] Found Steam client at: {}", p);
+                if verbose {
+                    eprintln!("[verbose] Found Steam client at: {}", p);
+                }
                 p
             }
             None => {
-                eprintln!("[debug] Steam client not found");
+                if verbose {
+                    eprintln!("[verbose] Steam client not found");
+                }
                 return None;
             }
         };
@@ -104,14 +108,18 @@ impl NativeSteamClient {
             let lib = match Library::new(&steam_path) {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!("[debug] Failed to load Steam client: {}", e);
+                    if verbose {
+                        eprintln!("[verbose] Failed to load Steam client: {}", e);
+                    }
                     return None;
                 }
             };
             let create_interface: Symbol<CreateInterfaceFn> = match lib.get(b"CreateInterface") {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("[debug] Failed to get CreateInterface: {}", e);
+                    if verbose {
+                        eprintln!("[verbose] Failed to get CreateInterface: {}", e);
+                    }
                     return None;
                 }
             };
@@ -121,10 +129,12 @@ impl NativeSteamClient {
             let mut return_code: i32 = 0;
             let client_ptr = create_interface(version.as_ptr(), &mut return_code);
             if client_ptr.is_null() {
-                eprintln!(
-                    "[debug] CreateInterface returned null (code: {})",
-                    return_code
-                );
+                if verbose {
+                    eprintln!(
+                        "[verbose] CreateInterface returned null (code: {})",
+                        return_code
+                    );
+                }
                 return None;
             }
             let client = client_ptr as *mut sys::ISteamClient;
@@ -132,18 +142,24 @@ impl NativeSteamClient {
             // Create pipe
             let pipe = sys::SteamAPI_ISteamClient_CreateSteamPipe(client);
             if pipe == 0 {
-                eprintln!("[debug] CreateSteamPipe failed");
+                if verbose {
+                    eprintln!("[verbose] CreateSteamPipe failed");
+                }
                 return None;
             }
 
             // Connect to global user
             let user = sys::SteamAPI_ISteamClient_ConnectToGlobalUser(client, pipe);
             if user == 0 {
-                eprintln!("[debug] ConnectToGlobalUser failed");
+                if verbose {
+                    eprintln!("[verbose] ConnectToGlobalUser failed");
+                }
                 sys::SteamAPI_ISteamClient_BReleaseSteamPipe(client, pipe);
                 return None;
             }
-            eprintln!("[debug] Successfully connected to Steam");
+            if verbose {
+                eprintln!("[verbose] Successfully connected to Steam");
+            }
 
             // Get ISteamApps
             let apps_version = CString::new("STEAMAPPS_INTERFACE_VERSION008").ok()?;
