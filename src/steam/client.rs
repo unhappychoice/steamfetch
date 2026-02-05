@@ -1,0 +1,242 @@
+use anyhow::{Context, Result};
+use futures::future::join_all;
+use reqwest::Client;
+
+use super::models::{
+    AchievementStats, AchievementsResponse, GameStat, GlobalAchievementsResponse,
+    OwnedGamesResponse, PlayerSummaryResponse, RarestAchievement, SteamStats,
+};
+
+const BASE_URL: &str = "https://api.steampowered.com";
+const MAX_ACHIEVEMENT_GAMES: usize = 20;
+
+pub struct SteamClient {
+    client: Client,
+    api_key: String,
+    steam_id: String,
+}
+
+impl SteamClient {
+    pub fn new(api_key: String, steam_id: String) -> Self {
+        Self {
+            client: Client::new(),
+            api_key,
+            steam_id,
+        }
+    }
+
+    pub async fn fetch_stats(&self) -> Result<SteamStats> {
+        let (player, games) = tokio::try_join!(self.fetch_player(), self.fetch_owned_games())?;
+
+        let unplayed = games
+            .games
+            .iter()
+            .filter(|g| g.playtime_forever == 0)
+            .count() as u32;
+        let total_playtime = games.games.iter().map(|g| g.playtime_forever).sum();
+        let top_games = self.extract_top_games(&games);
+        let achievement_stats = self.fetch_achievement_stats(&games).await;
+
+        Ok(SteamStats {
+            username: player.personaname,
+            game_count: games.game_count,
+            unplayed_count: unplayed,
+            total_playtime_minutes: total_playtime,
+            top_games,
+            achievement_stats,
+        })
+    }
+
+    async fn fetch_player(&self) -> Result<super::models::Player> {
+        let url = format!(
+            "{}/ISteamUser/GetPlayerSummaries/v2/?key={}&steamids={}",
+            BASE_URL, self.api_key, self.steam_id
+        );
+        self.client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch player summary")?
+            .json::<PlayerSummaryResponse>()
+            .await
+            .context("Failed to parse player summary")?
+            .response
+            .players
+            .into_iter()
+            .next()
+            .context("Player not found")
+    }
+
+    async fn fetch_owned_games(&self) -> Result<super::models::OwnedGamesData> {
+        let url = format!(
+            "{}/IPlayerService/GetOwnedGames/v1/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1",
+            BASE_URL, self.api_key, self.steam_id
+        );
+        Ok(self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch owned games")?
+            .json::<OwnedGamesResponse>()
+            .await
+            .context("Failed to parse owned games")?
+            .response)
+    }
+
+    async fn fetch_achievement_stats(
+        &self,
+        games: &super::models::OwnedGamesData,
+    ) -> Option<AchievementStats> {
+        let played_games = self.get_played_games(games);
+        let results = join_all(
+            played_games
+                .iter()
+                .map(|(appid, name)| self.fetch_game_achievements(*appid, name.clone())),
+        )
+        .await;
+
+        let mut total_achieved = 0u32;
+        let mut total_possible = 0u32;
+        let mut perfect_games = 0u32;
+        let mut rarest: Option<RarestAchievement> = None;
+
+        for result in results.into_iter().flatten() {
+            total_achieved += result.achieved;
+            total_possible += result.total;
+
+            if result.achieved == result.total && result.total > 0 {
+                perfect_games += 1;
+            }
+
+            if let Some(r) = result.rarest {
+                match &rarest {
+                    None => rarest = Some(r),
+                    Some(current) if r.percent < current.percent => rarest = Some(r),
+                    _ => {}
+                }
+            }
+        }
+
+        (total_possible > 0).then_some(AchievementStats {
+            total_achieved,
+            total_possible,
+            perfect_games,
+            rarest,
+        })
+    }
+
+    async fn fetch_game_achievements(
+        &self,
+        appid: u32,
+        game_name: String,
+    ) -> Option<GameAchievementResult> {
+        let (player_achievements, global_percentages) = tokio::join!(
+            self.fetch_player_achievements(appid),
+            self.fetch_global_percentages(appid)
+        );
+
+        let achievements = player_achievements.ok()?;
+        let percentages = global_percentages.ok().unwrap_or_default();
+
+        let achieved = achievements.iter().filter(|a| a.achieved == 1).count() as u32;
+        let total = achievements.len() as u32;
+
+        let rarest = achievements
+            .iter()
+            .filter(|a| a.achieved == 1)
+            .filter_map(|a| {
+                let percent = percentages.get(&a.apiname)?;
+                Some(RarestAchievement {
+                    name: a.name.clone().unwrap_or_else(|| a.apiname.clone()),
+                    game: game_name.clone(),
+                    percent: *percent,
+                })
+            })
+            .min_by(|a, b| a.percent.partial_cmp(&b.percent).unwrap());
+
+        Some(GameAchievementResult {
+            achieved,
+            total,
+            rarest,
+        })
+    }
+
+    async fn fetch_player_achievements(
+        &self,
+        appid: u32,
+    ) -> Result<Vec<super::models::Achievement>> {
+        let url = format!(
+            "{}/ISteamUserStats/GetPlayerAchievements/v1/?key={}&steamid={}&appid={}&l=english",
+            BASE_URL, self.api_key, self.steam_id, appid
+        );
+        Ok(self
+            .client
+            .get(&url)
+            .send()
+            .await?
+            .json::<AchievementsResponse>()
+            .await?
+            .playerstats
+            .achievements)
+    }
+
+    async fn fetch_global_percentages(
+        &self,
+        appid: u32,
+    ) -> Result<std::collections::HashMap<String, f64>> {
+        let url = format!(
+            "{}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid={}",
+            BASE_URL, appid
+        );
+        let response: GlobalAchievementsResponse =
+            self.client.get(&url).send().await?.json().await?;
+
+        Ok(response
+            .achievementpercentages
+            .achievements
+            .into_iter()
+            .map(|a| (a.name, a.percent))
+            .collect())
+    }
+
+    fn extract_top_games(&self, games: &super::models::OwnedGamesData) -> Vec<GameStat> {
+        let mut sorted: Vec<_> = games.games.iter().collect();
+        sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
+
+        sorted
+            .into_iter()
+            .take(3)
+            .map(|g| GameStat {
+                name: g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
+                playtime_minutes: g.playtime_forever,
+            })
+            .collect()
+    }
+
+    fn get_played_games(&self, games: &super::models::OwnedGamesData) -> Vec<(u32, String)> {
+        let mut sorted: Vec<_> = games
+            .games
+            .iter()
+            .filter(|g| g.playtime_forever > 0)
+            .collect();
+        sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
+
+        sorted
+            .into_iter()
+            .take(MAX_ACHIEVEMENT_GAMES)
+            .map(|g| {
+                (
+                    g.appid,
+                    g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
+                )
+            })
+            .collect()
+    }
+}
+
+struct GameAchievementResult {
+    achieved: u32,
+    total: u32,
+    rarest: Option<RarestAchievement>,
+}
