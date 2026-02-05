@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-02-05
+
+### Features
+
+- feat: add --verbose flag for debugging Native SDK issues ([40d8f90](https://github.com/unhappychoice/steamfetch/commit/40d8f90))
+
+### Bug Fixes
+
+- fix: improve Windows registry parsing and add debug output ([0f55bac](https://github.com/unhappychoice/steamfetch/commit/0f55bac))
+
+### Other Changes
+
+- chore: bump version to v0.2.5 ([fdeca21](https://github.com/unhappychoice/steamfetch/commit/fdeca21))
+
+
 ## [0.2.4] - 2026-02-05
 
 ### Features
@@ -15,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.4 ([a84a6fb](https://github.com/unhappychoice/steamfetch/commit/a84a6fb))
+- chore: bump version to v0.2.4 ([33f0ded](https://github.com/unhappychoice/steamfetch/commit/33f0ded))
 - docs: change license from MIT to ISC ([3d754da](https://github.com/unhappychoice/steamfetch/commit/3d754da))
 - docs: improve README with installation, usage, and contributing ([5d888e5](https://github.com/unhappychoice/steamfetch/commit/5d888e5))
 
