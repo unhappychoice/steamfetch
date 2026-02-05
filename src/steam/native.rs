@@ -6,6 +6,75 @@ use steamworks::sys;
 
 type CreateInterfaceFn = unsafe extern "C" fn(*const c_char, *mut i32) -> *mut c_void;
 
+#[cfg(target_os = "linux")]
+fn get_steam_client_path() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let paths = [
+        format!("{}/.steam/sdk64/steamclient.so", home),
+        format!("{}/.steam/steam/linux64/steamclient.so", home),
+        format!("{}/.local/share/Steam/linux64/steamclient.so", home),
+    ];
+    paths.into_iter().find(|p| std::path::Path::new(p).exists())
+}
+
+#[cfg(target_os = "windows")]
+fn get_steam_client_path() -> Option<String> {
+    let paths = [
+        "C:\\Program Files (x86)\\Steam\\steamclient64.dll".to_string(),
+        "C:\\Program Files\\Steam\\steamclient64.dll".to_string(),
+    ];
+
+    // Try registry first
+    if let Some(path) = get_steam_path_from_registry() {
+        let client_path = format!("{}\\steamclient64.dll", path);
+        if std::path::Path::new(&client_path).exists() {
+            return Some(client_path);
+        }
+    }
+
+    paths.into_iter().find(|p| std::path::Path::new(p).exists())
+}
+
+#[cfg(target_os = "windows")]
+fn get_steam_path_from_registry() -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("reg")
+        .args(["query", "HKCU\\Software\\Valve\\Steam", "/v", "SteamPath"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("SteamPath") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                return Some(parts[2..].join(" "));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn get_steam_client_path() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let path = format!(
+        "{}/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamclient.dylib",
+        home
+    );
+    if std::path::Path::new(&path).exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn get_steam_client_path() -> Option<String> {
+    None
+}
+
 pub struct NativeSteamClient {
     _lib: Library, // Keep library loaded
     client: *mut sys::ISteamClient,
@@ -18,7 +87,7 @@ pub struct NativeSteamClient {
 
 impl NativeSteamClient {
     pub fn try_new() -> Option<Self> {
-        let steam_path = std::env::var("HOME").ok()? + "/.steam/sdk64/steamclient.so";
+        let steam_path = get_steam_client_path()?;
 
         unsafe {
             let lib = Library::new(&steam_path).ok()?;
