@@ -77,6 +77,27 @@ fn get_steam_client_path() -> Option<String> {
     None
 }
 
+/// Sets the DLL search directory on Windows so that steamclient64.dll's dependencies can be found
+#[cfg(target_os = "windows")]
+fn set_dll_directory(path: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetDllDirectoryW(path: *const u16) -> i32;
+    }
+
+    let wide: Vec<u16> = OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        SetDllDirectoryW(wide.as_ptr());
+    }
+}
+
 pub struct NativeSteamClient {
     _lib: Library, // Keep library loaded
     client: *mut sys::ISteamClient,
@@ -105,6 +126,19 @@ impl NativeSteamClient {
         };
 
         unsafe {
+            // On Windows, set DLL directory to Steam's folder so dependencies can be found
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(parent) = std::path::Path::new(&steam_path).parent() {
+                    if let Some(dir_str) = parent.to_str() {
+                        if verbose {
+                            eprintln!("[verbose] Setting DLL directory to: {}", dir_str);
+                        }
+                        set_dll_directory(dir_str);
+                    }
+                }
+            }
+
             let lib = match Library::new(&steam_path) {
                 Ok(l) => l,
                 Err(e) => {
