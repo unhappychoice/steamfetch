@@ -1,6 +1,6 @@
 [package]
 name = "steamfetch"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "neofetch for Steam - Display your Steam stats in terminal"
 authors = ["unhappychoice"]
