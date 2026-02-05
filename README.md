@@ -36,8 +36,11 @@ cargo install steamfetch
 ## Usage
 
 ```bash
-# Set your Steam API key and Steam ID
+# Set your Steam API key
 export STEAM_API_KEY="your_api_key"
+
+# If Steam client is running: uses Steamworks SDK (accurate)
+# If Steam client is not running: uses Web API (requires STEAM_ID)
 export STEAM_ID="your_steam_id"
 
 # Run
@@ -59,12 +62,24 @@ Find your Steam ID at: https://steamid.io/
 - [x] Rarest achievements
 - [x] SteamOS ASCII art logo
 - [x] Demo mode for testing
+- [x] Steamworks SDK for accurate detection (auto-fallback to Web API)
 - [ ] Custom color themes
 - [ ] JSON output
 
-## Limitations
+## How It Works
 
-The Steam API only returns games currently in your library. Games you've played but no longer own (e.g., expired free-to-play licenses) are not included in the statistics. This means achievement counts may differ from services like completionist.me that track historical data.
+### With Steam Client Running (Recommended)
+
+Uses Steamworks SDK for accurate game detection:
+- Checks ownership for all known Steam games (~73,000 titles)
+- Accurate game count and achievement statistics
+
+### Without Steam Client
+
+Falls back to Steam Web API:
+- Only returns games currently visible in your library
+- Some owned games may not appear in the API response
+- Requires `STEAM_ID` environment variable
 
 ## License
 
