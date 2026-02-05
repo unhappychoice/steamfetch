@@ -678,6 +678,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -822,6 +832,12 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "percent-encoding"
@@ -1146,12 +1162,32 @@ dependencies = [
  "clap",
  "colored",
  "futures",
+ "libloading",
  "reqwest",
  "serde",
  "serde_json",
+ "steamworks",
  "thiserror",
  "tokio",
 ]
+
+[[package]]
+name = "steamworks"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "722f54c70818b8debdc25b18618b77a0a69fa280012c29e7904d32f9136299fc"
+dependencies = [
+ "bitflags",
+ "paste",
+ "steamworks-sys",
+ "thiserror",
+]
+
+[[package]]
+name = "steamworks-sys"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42862065c9e685d08cc3d9f6c609d4b46bd9684ec7e9420688eb979213469582"
 
 [[package]]
 name = "strsim"

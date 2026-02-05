@@ -19,3 +19,5 @@ colored = "2"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
+steamworks = { version = "0.12", features = ["raw-bindings"] }
+libloading = "0.8"
