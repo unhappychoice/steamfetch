@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use config::Config;
-use steam::SteamClient;
+use steam::{NativeSteamClient, SteamClient};
 
 #[derive(Parser)]
 #[command(name = "steamfetch")]
@@ -25,13 +25,40 @@ async fn main() -> Result<()> {
     let stats = if cli.demo {
         demo_stats()
     } else {
-        let config = Config::from_env()?;
-        let client = SteamClient::new(config.api_key, config.steam_id);
-        client.fetch_stats().await?
+        fetch_stats().await?
     };
 
     display::render(&stats);
     Ok(())
+}
+
+async fn fetch_stats() -> Result<steam::SteamStats> {
+    // Try Steamworks SDK first, fallback to Web API
+    match NativeSteamClient::try_new() {
+        Some(native) => fetch_native_stats(native).await,
+        None => fetch_web_stats().await,
+    }
+}
+
+async fn fetch_web_stats() -> Result<steam::SteamStats> {
+    let config = Config::from_env()?;
+    let client = SteamClient::new(config.api_key, config.steam_id);
+    client.fetch_stats().await
+}
+
+async fn fetch_native_stats(native: NativeSteamClient) -> Result<steam::SteamStats> {
+    let username = native.username();
+    let steam_id = native.steam_id().to_string();
+
+    let all_appids = steam::native::fetch_all_game_appids().await?;
+    let owned_appids = native.get_owned_appids(&all_appids);
+
+    let api_key =
+        std::env::var("STEAM_API_KEY").map_err(|_| anyhow::anyhow!("STEAM_API_KEY not set"))?;
+    let client = SteamClient::new(api_key, steam_id);
+    client
+        .fetch_stats_for_appids(&owned_appids, &username)
+        .await
 }
 
 fn demo_stats() -> steam::SteamStats {
