@@ -123,16 +123,27 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
         env:
           OPENSSL_VENDORED: 1
-      - name: Create archive (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Create archive (Linux)
+        if: contains(matrix.target, 'linux')
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czf ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.tar.gz steamfetch
+          STEAM_API_SO=$(find ../build -name "libsteam_api.so" | head -1)
+          cp "$STEAM_API_SO" .
+          tar -czf ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.tar.gz steamfetch libsteam_api.so
+      - name: Create archive (macOS)
+        if: contains(matrix.target, 'apple')
+        run: |
+          cd target/${{ matrix.target }}/release
+          STEAM_API_DYLIB=$(find ../build -name "libsteam_api.dylib" | head -1)
+          cp "$STEAM_API_DYLIB" .
+          tar -czf ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.tar.gz steamfetch libsteam_api.dylib
       - name: Create archive (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path steamfetch.exe -DestinationPath ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.zip
+          $steamApiDll = Get-ChildItem -Path "../build" -Recurse -Filter "steam_api64.dll" | Select-Object -First 1
+          Copy-Item $steamApiDll.FullName -Destination .
+          Compress-Archive -Path steamfetch.exe,steam_api64.dll -DestinationPath ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.zip
       - name: Upload Release Asset (Unix)
         if: matrix.os != 'windows-latest'
         uses: actions/upload-release-asset@v1

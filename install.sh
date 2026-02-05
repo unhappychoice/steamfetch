@@ -48,11 +48,8 @@ detect_platform() {
                 x86_64)
                     echo "x86_64-unknown-linux-gnu"
                     ;;
-                aarch64|arm64)
-                    echo "aarch64-unknown-linux-gnu"
-                    ;;
                 *)
-                    echo "Unsupported architecture: $ARCH" >&2
+                    echo "Unsupported architecture: $ARCH (Steam only supports x86_64 on Linux)" >&2
                     exit 1
                     ;;
             esac
@@ -100,10 +97,11 @@ main() {
     INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
     mkdir -p "$INSTALL_DIR"
 
-    mv "$TEMP_DIR/$BINARY_NAME" "$INSTALL_DIR/"
+    # Install binary and Steam API library
+    mv "$TEMP_DIR"/* "$INSTALL_DIR/"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-    echo "Successfully installed $BINARY_NAME to $INSTALL_DIR/$BINARY_NAME"
+    echo "Successfully installed $BINARY_NAME to $INSTALL_DIR/"
     echo ""
     echo "Make sure $INSTALL_DIR is in your PATH:"
     echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
