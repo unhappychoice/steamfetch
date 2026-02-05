@@ -74,14 +74,32 @@ cargo build --release
 
 Visit https://steamid.io/ and enter your Steam profile URL.
 
-### 3. Set Environment Variables
+### 3. Configure
+
+On first run, steamfetch creates a config file at `~/.config/steamfetch/config.toml`.
+
+Edit the config file:
+
+```toml
+[api]
+steam_api_key = "your_api_key_here"
+steam_id = "your_steam_id_here"
+
+[display]
+show_top_games = 5
+show_recently_played = true
+show_achievements = true
+show_rarest = true
+```
+
+Or use environment variables (takes precedence over config file):
 
 ```bash
 export STEAM_API_KEY="your_api_key_here"
 export STEAM_ID="your_steam_id_here"
 ```
 
-Add these to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for persistence.
+**Note:** If Steam is running, `STEAM_ID` is auto-detected via Native SDK.
 
 ## Usage
 
@@ -91,6 +109,15 @@ steamfetch
 
 # Demo mode (no API key required)
 steamfetch --demo
+
+# Show config file path
+steamfetch --config-path
+
+# Use custom config file
+steamfetch --config /path/to/config.toml
+
+# Verbose output for debugging
+steamfetch --verbose
 
 # Show version
 steamfetch --version

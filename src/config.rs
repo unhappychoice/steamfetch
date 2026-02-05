@@ -122,9 +122,51 @@ fn load_config_file(custom_path: Option<PathBuf>) -> Result<ConfigFile> {
             toml::from_str(&content)
                 .with_context(|| format!("Failed to parse config file: {}", p.display()))
         }
+        Some(p) => {
+            create_default_config(&p)?;
+            Ok(ConfigFile::default())
+        }
         _ => Ok(ConfigFile::default()),
     }
 }
+
+fn create_default_config(path: &PathBuf) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+    }
+
+    fs::write(path, DEFAULT_CONFIG)
+        .with_context(|| format!("Failed to write config file: {}", path.display()))?;
+
+    eprintln!("Created config file: {}", path.display());
+    Ok(())
+}
+
+const DEFAULT_CONFIG: &str = r#"# steamfetch configuration file
+# https://github.com/unhappychoice/steamfetch
+
+[api]
+# Get your API key at: https://steamcommunity.com/dev/apikey
+# steam_api_key = "YOUR_API_KEY"
+
+# Find your Steam ID at: https://steamid.io
+# Note: If Steam is running, STEAM_ID is auto-detected
+# steam_id = "YOUR_STEAM_ID"
+
+[display]
+# Number of top played games to show
+# show_top_games = 5
+
+# Show recently played games (last 2 weeks)
+# show_recently_played = true
+
+# Show achievement statistics
+# show_achievements = true
+
+# Show rarest achievement
+# show_rarest = true
+"#;
 
 fn default_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("steamfetch").join("config.toml"))
