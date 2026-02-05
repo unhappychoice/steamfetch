@@ -110,6 +110,16 @@ impl Config {
             display: config_file.display,
         })
     }
+
+    /// Load only API key (for Native SDK mode where steam_id is auto-detected)
+    pub fn load_api_key_only(config_path: Option<PathBuf>) -> Result<String> {
+        let config_file = load_config_file(config_path)?;
+
+        env::var("STEAM_API_KEY")
+            .ok()
+            .or(config_file.api.steam_api_key)
+            .context(API_KEY_HELP)
+    }
 }
 
 fn load_config_file(custom_path: Option<PathBuf>) -> Result<ConfigFile> {

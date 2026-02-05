@@ -90,9 +90,9 @@ async fn fetch_native_stats(
         );
     }
 
-    // Load API key from config file or environment variable
-    let config = Config::load(config_path)?;
-    let client = SteamClient::new(config.api_key, steam_id).with_verbose(verbose);
+    // Load API key only (steam_id already obtained from Native SDK)
+    let api_key = Config::load_api_key_only(config_path)?;
+    let client = SteamClient::new(api_key, steam_id).with_verbose(verbose);
     client
         .fetch_stats_for_appids(&owned_appids, &username)
         .await
