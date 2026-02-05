@@ -39,23 +39,35 @@ async fn main() -> Result<()> {
 async fn fetch_stats(verbose: bool) -> Result<steam::SteamStats> {
     // Try Steamworks SDK first, fallback to Web API
     match NativeSteamClient::try_new(verbose) {
-        Some(native) => fetch_native_stats(native).await,
-        None => fetch_web_stats().await,
+        Some(native) => fetch_native_stats(native, verbose).await,
+        None => fetch_web_stats(verbose).await,
     }
 }
 
-async fn fetch_web_stats() -> Result<steam::SteamStats> {
+async fn fetch_web_stats(verbose: bool) -> Result<steam::SteamStats> {
     let config = Config::from_env()?;
-    let client = SteamClient::new(config.api_key, config.steam_id);
+    let client = SteamClient::new(config.api_key, config.steam_id).with_verbose(verbose);
     client.fetch_stats().await
 }
 
-async fn fetch_native_stats(native: NativeSteamClient) -> Result<steam::SteamStats> {
+async fn fetch_native_stats(native: NativeSteamClient, verbose: bool) -> Result<steam::SteamStats> {
     let username = native.username();
     let steam_id = native.steam_id().to_string();
 
+    if verbose {
+        eprintln!("[verbose] Native SDK username: {}", username);
+        eprintln!("[verbose] Native SDK steam_id: {}", steam_id);
+    }
+
     let all_appids = steam::native::fetch_all_game_appids().await?;
     let owned_appids = native.get_owned_appids(&all_appids);
+
+    if verbose {
+        eprintln!(
+            "[verbose] Found {} owned games via Native SDK",
+            owned_appids.len()
+        );
+    }
 
     let api_key = std::env::var("STEAM_API_KEY").map_err(|_| {
         anyhow::anyhow!(
@@ -66,7 +78,7 @@ async fn fetch_native_stats(native: NativeSteamClient) -> Result<steam::SteamSta
             3. Set it: export STEAM_API_KEY=\"your-key\""
         )
     })?;
-    let client = SteamClient::new(api_key, steam_id);
+    let client = SteamClient::new(api_key, steam_id).with_verbose(verbose);
     client
         .fetch_stats_for_appids(&owned_appids, &username)
         .await

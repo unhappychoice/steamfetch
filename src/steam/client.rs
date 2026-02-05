@@ -13,6 +13,7 @@ pub struct SteamClient {
     client: Client,
     api_key: String,
     steam_id: String,
+    verbose: bool,
 }
 
 impl SteamClient {
@@ -21,7 +22,13 @@ impl SteamClient {
             client: Client::new(),
             api_key,
             steam_id,
+            verbose: false,
         }
+    }
+
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
@@ -119,14 +126,37 @@ impl SteamClient {
             "{}/ISteamUser/GetPlayerSummaries/v2/?key={}&steamids={}",
             BASE_URL, self.api_key, self.steam_id
         );
-        self.client
+        if self.verbose {
+            eprintln!(
+                "[verbose] Fetching player summary for Steam ID: {}",
+                self.steam_id
+            );
+        }
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
-            .context("Failed to fetch player summary")?
-            .json::<PlayerSummaryResponse>()
+            .context("Failed to fetch player summary")?;
+
+        let status = response.status();
+        let body = response
+            .text()
             .await
-            .context("Failed to parse player summary")?
+            .context("Failed to read response body")?;
+
+        if self.verbose {
+            eprintln!("[verbose] API response status: {}", status);
+            eprintln!(
+                "[verbose] API response body: {}",
+                &body[..body.len().min(500)]
+            );
+        }
+
+        let parsed: PlayerSummaryResponse =
+            serde_json::from_str(&body).context("Failed to parse player summary")?;
+
+        parsed
             .response
             .players
             .into_iter()
