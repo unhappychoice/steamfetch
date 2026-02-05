@@ -4,6 +4,7 @@ mod steam;
 
 use anyhow::Result;
 use clap::Parser;
+use std::path::PathBuf;
 
 use config::Config;
 use steam::{NativeSteamClient, SteamClient};
@@ -20,37 +21,57 @@ struct Cli {
     /// Show verbose output for debugging
     #[arg(long, short)]
     verbose: bool,
+
+    /// Path to config file
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+
+    /// Show config file path and exit
+    #[arg(long)]
+    config_path: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.config_path {
+        match config::config_path() {
+            Some(path) => println!("{}", path.display()),
+            None => eprintln!("Could not determine config directory"),
+        }
+        return Ok(());
+    }
+
     let stats = if cli.demo {
         demo_stats()
     } else {
-        fetch_stats(cli.verbose).await?
+        fetch_stats(cli.verbose, cli.config).await?
     };
 
     display::render(&stats);
     Ok(())
 }
 
-async fn fetch_stats(verbose: bool) -> Result<steam::SteamStats> {
+async fn fetch_stats(verbose: bool, config_path: Option<PathBuf>) -> Result<steam::SteamStats> {
     // Try Steamworks SDK first, fallback to Web API
     match NativeSteamClient::try_new(verbose) {
-        Some(native) => fetch_native_stats(native, verbose).await,
-        None => fetch_web_stats(verbose).await,
+        Some(native) => fetch_native_stats(native, verbose, config_path).await,
+        None => fetch_web_stats(verbose, config_path).await,
     }
 }
 
-async fn fetch_web_stats(verbose: bool) -> Result<steam::SteamStats> {
-    let config = Config::from_env()?;
+async fn fetch_web_stats(verbose: bool, config_path: Option<PathBuf>) -> Result<steam::SteamStats> {
+    let config = Config::load(config_path)?;
     let client = SteamClient::new(config.api_key, config.steam_id).with_verbose(verbose);
     client.fetch_stats().await
 }
 
-async fn fetch_native_stats(native: NativeSteamClient, verbose: bool) -> Result<steam::SteamStats> {
+async fn fetch_native_stats(
+    native: NativeSteamClient,
+    verbose: bool,
+    config_path: Option<PathBuf>,
+) -> Result<steam::SteamStats> {
     let username = native.username();
     let steam_id = native.steam_id().to_string();
 
@@ -69,16 +90,9 @@ async fn fetch_native_stats(native: NativeSteamClient, verbose: bool) -> Result<
         );
     }
 
-    let api_key = std::env::var("STEAM_API_KEY").map_err(|_| {
-        anyhow::anyhow!(
-            "STEAM_API_KEY not set.\n\n\
-            To get your API key:\n  \
-            1. Visit https://steamcommunity.com/dev/apikey\n  \
-            2. Log in and create a key\n  \
-            3. Set it: export STEAM_API_KEY=\"your-key\""
-        )
-    })?;
-    let client = SteamClient::new(api_key, steam_id).with_verbose(verbose);
+    // Load API key from config file or environment variable
+    let config = Config::load(config_path)?;
+    let client = SteamClient::new(config.api_key, steam_id).with_verbose(verbose);
     client
         .fetch_stats_for_appids(&owned_appids, &username)
         .await
