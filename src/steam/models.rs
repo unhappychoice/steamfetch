@@ -30,7 +30,6 @@ pub struct RecentlyPlayedResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct RecentlyPlayedData {
-    pub total_count: Option<u32>,
     #[serde(default)]
     pub games: Vec<Game>,
 }
@@ -60,7 +59,6 @@ pub struct PlayerSummaryData {
 pub struct Player {
     pub personaname: String,
     pub timecreated: Option<u64>,
-    pub loccountrycode: Option<String>,
 }
 
 // Achievements API
@@ -138,7 +136,6 @@ pub struct SteamStats {
     pub top_games: Vec<GameStat>,
     pub achievement_stats: Option<AchievementStats>,
     pub account_created: Option<u64>,
-    pub country: Option<String>,
     pub steam_level: Option<u32>,
     pub recently_played: Vec<GameStat>,
 }
@@ -167,10 +164,6 @@ pub struct GameStat {
 impl SteamStats {
     pub fn playtime_hours(&self) -> u32 {
         self.total_playtime_minutes / 60
-    }
-
-    pub fn playtime_days(&self) -> u32 {
-        self.total_playtime_minutes / 60 / 24
     }
 }
 

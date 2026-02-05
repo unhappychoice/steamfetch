@@ -49,7 +49,6 @@ impl SteamClient {
             top_games,
             achievement_stats,
             account_created: player.timecreated,
-            country: player.loccountrycode,
             steam_level,
             recently_played,
         })
@@ -77,7 +76,7 @@ impl SteamClient {
             .filter(|id| {
                 games_with_playtime
                     .get(id)
-                    .map_or(true, |g| g.playtime_forever == 0)
+                    .is_none_or(|g| g.playtime_forever == 0)
             })
             .count() as u32;
 
@@ -110,7 +109,6 @@ impl SteamClient {
             top_games,
             achievement_stats,
             account_created: player.timecreated,
-            country: player.loccountrycode,
             steam_level,
             recently_played,
         })
