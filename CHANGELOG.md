@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-02-05
+
+### Bug Fixes
+
+- fix: set DLL directory on Windows for steamclient64.dll dependencies (#14) ([07cefe0](https://github.com/unhappychoice/steamfetch/commit/07cefe0))
+
+### Other Changes
+
+- chore: bump version to v0.2.6 ([9ea5a4f](https://github.com/unhappychoice/steamfetch/commit/9ea5a4f))
+
+
 ## [0.2.5] - 2026-02-05
 
 ### Features
@@ -17,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.5 ([fdeca21](https://github.com/unhappychoice/steamfetch/commit/fdeca21))
+- chore: bump version to v0.2.5 ([3363173](https://github.com/unhappychoice/steamfetch/commit/3363173))
 
 
 ## [0.2.4] - 2026-02-05
