@@ -8,7 +8,6 @@ use super::models::{
 };
 
 const BASE_URL: &str = "https://api.steampowered.com";
-const MAX_ACHIEVEMENT_GAMES: usize = 20;
 
 pub struct SteamClient {
     client: Client,
@@ -88,9 +87,9 @@ impl SteamClient {
         &self,
         games: &super::models::OwnedGamesData,
     ) -> Option<AchievementStats> {
-        let played_games = self.get_played_games(games);
+        let all_games = self.get_all_games(games);
         let results = join_all(
-            played_games
+            all_games
                 .iter()
                 .map(|(appid, name)| self.fetch_game_achievements(*appid, name.clone())),
         )
@@ -142,11 +141,14 @@ impl SteamClient {
         let achieved = achievements.iter().filter(|a| a.achieved == 1).count() as u32;
         let total = achievements.len() as u32;
 
+        // Find rarest achievement - try matching by apiname first, then by lowercase
         let rarest = achievements
             .iter()
             .filter(|a| a.achieved == 1)
             .filter_map(|a| {
-                let percent = percentages.get(&a.apiname)?;
+                let percent = percentages
+                    .get(&a.apiname)
+                    .or_else(|| percentages.get(&a.apiname.to_uppercase()))?;
                 Some(RarestAchievement {
                     name: a.name.clone().unwrap_or_else(|| a.apiname.clone()),
                     game: game_name.clone(),
@@ -214,17 +216,10 @@ impl SteamClient {
             .collect()
     }
 
-    fn get_played_games(&self, games: &super::models::OwnedGamesData) -> Vec<(u32, String)> {
-        let mut sorted: Vec<_> = games
+    fn get_all_games(&self, games: &super::models::OwnedGamesData) -> Vec<(u32, String)> {
+        games
             .games
             .iter()
-            .filter(|g| g.playtime_forever > 0)
-            .collect();
-        sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
-
-        sorted
-            .into_iter()
-            .take(MAX_ACHIEVEMENT_GAMES)
             .map(|g| {
                 (
                     g.appid,

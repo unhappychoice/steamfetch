@@ -69,7 +69,35 @@ pub struct GlobalAchievementsData {
 #[derive(Debug, Deserialize)]
 pub struct GlobalAchievement {
     pub name: String,
+    #[serde(deserialize_with = "deserialize_percent")]
     pub percent: f64,
+}
+
+fn deserialize_percent<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct PercentVisitor;
+
+    impl<'de> Visitor<'de> for PercentVisitor {
+        type Value = f64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a float or string representing a float")
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> {
+            Ok(v)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<f64, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+    }
+
+    deserializer.deserialize_any(PercentVisitor)
 }
 
 // Aggregated Stats
