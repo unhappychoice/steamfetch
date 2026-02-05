@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-02-05
+
+### Features
+
+- feat: add Windows and macOS support for Native Steam SDK ([e78ff26](https://github.com/unhappychoice/steamfetch/commit/e78ff26))
+- feat: detect WSL and install Windows binary to Windows path ([4639a87](https://github.com/unhappychoice/steamfetch/commit/4639a87))
+- feat: add Windows support to install script ([d373ec4](https://github.com/unhappychoice/steamfetch/commit/d373ec4))
+
+### Other Changes
+
+- chore: bump version to v0.2.4 ([a84a6fb](https://github.com/unhappychoice/steamfetch/commit/a84a6fb))
+- docs: change license from MIT to ISC ([3d754da](https://github.com/unhappychoice/steamfetch/commit/3d754da))
+- docs: improve README with installation, usage, and contributing ([5d888e5](https://github.com/unhappychoice/steamfetch/commit/5d888e5))
+
+
 ## [0.2.3] - 2026-02-05
 
 ### Bug Fixes
@@ -13,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.3 ([c594700](https://github.com/unhappychoice/steamfetch/commit/c594700))
+- chore: bump version to v0.2.3 ([24e5f20](https://github.com/unhappychoice/steamfetch/commit/24e5f20))
 
 
 ## [0.2.2] - 2026-02-05
