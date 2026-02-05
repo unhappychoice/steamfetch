@@ -2,27 +2,60 @@ use colored::Colorize;
 
 use crate::steam::SteamStats;
 
-const LOGO: [&str; 7] = [
-    "        ╱╲        ",
-    "       ╱  ╲       ",
-    "      ╱    ╲      ",
-    "     ╱  ▲▲  ╲     ",
-    "    ╱  ▲▲▲▲  ╲    ",
-    "   ╱__________╲   ",
-    "   \\__________/   ",
-];
-
 pub fn render(stats: &SteamStats) {
     let info_lines = build_info_lines(stats);
+    let logo_lines = build_logo();
 
     println!();
-    for (i, logo_line) in LOGO.iter().enumerate() {
+    for (i, logo_line) in logo_lines.iter().enumerate() {
         let info = info_lines.get(i).map(String::as_str).unwrap_or("");
-        println!("{}  {}", logo_line.blue(), info);
+        println!("{}  {}", logo_line, info);
     }
 
-    render_remaining_info(&info_lines[LOGO.len()..]);
+    if info_lines.len() > logo_lines.len() {
+        render_remaining_info(&info_lines[logo_lines.len()..], logo_width());
+    }
     println!();
+}
+
+fn build_logo() -> Vec<String> {
+    let width = logo_width();
+    let lines: Vec<(&str, bool)> = vec![
+        ("              .,,,,.              ", true),
+        ("        .,'onNMMMMMNNnn',.        ", true),
+        ("     .'oNMANKMMMMMMMMMMMNNn'.     ", true),
+        ("   .'ANMMMMMMMXKNNWWWPFFWNNMNn.   ", true),
+        ("  ;NNMMMMMMMMMMNWW'' ,.., 'WMMM,  ", true),
+        (" ;NMMMMV+##+VNWWW' .+;'':+, 'WMW, ", true),
+        (",VNNWP+######+WW,  +:    :+, +MMM,", true),
+        ("'+#############,   +.    ,+' +NMMM", false),
+        ("  '*#########*'     '*,,*' .+NMMMM", false),
+        ("     `'*###*'          ,.,;###+WNM", false),
+        ("         .,;;,      .;##########+W", false),
+        (",',.         ';  ,+##############'", false),
+        (" '###+. :,. .,; ,###############' ", false),
+        ("  '####.. `'' .,###############'  ", false),
+        ("    '#####+++################'    ", false),
+        ("      '*##################*'      ", false),
+        ("         ''*##########*''         ", false),
+        ("              ''''''              ", false),
+    ];
+
+    lines
+        .into_iter()
+        .map(|(text, is_magenta)| {
+            let padded = format!("{:<width$}", text, width = width);
+            if is_magenta {
+                format!("{}", padded.magenta())
+            } else {
+                format!("{}", padded.white())
+            }
+        })
+        .collect()
+}
+
+fn logo_width() -> usize {
+    35
 }
 
 fn build_info_lines(stats: &SteamStats) -> Vec<String> {
@@ -84,12 +117,12 @@ fn build_info_lines(stats: &SteamStats) -> Vec<String> {
             lines.push(format!(
                 "{}: \"{}\" ({:.1}%)",
                 "Rarest".bold().yellow(),
-                truncate(&rarest.name, 18).trim(),
+                truncate(&rarest.name, 25).trim(),
                 rarest.percent
             ));
             lines.push(format!(
                 "  in {}",
-                truncate(&rarest.game, 25).trim().dimmed()
+                truncate(&rarest.game, 30).trim().dimmed()
             ));
         }
     }
@@ -97,18 +130,20 @@ fn build_info_lines(stats: &SteamStats) -> Vec<String> {
     lines
 }
 
-fn render_remaining_info(lines: &[String]) {
-    let padding = " ".repeat(LOGO[0].len());
+fn render_remaining_info(lines: &[String], width: usize) {
+    let padding = " ".repeat(width);
     lines
         .iter()
         .for_each(|line| println!("{}  {}", padding, line));
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_len {
         format!("{:<width$}", s, width = max_len)
     } else {
-        format!("{}...", &s[..max_len - 3])
+        let truncated: String = chars[..max_len - 3].iter().collect();
+        format!("{}...", truncated)
     }
 }
 
