@@ -57,9 +57,11 @@ fn logo_width() -> usize {
 }
 
 fn build_info_lines(stats: &SteamStats) -> Vec<String> {
+    // 13 (label) + 1 (space) + 14 (value) + 2 (space) + ~20 (title) = 50
+    let line_width = 50;
     let mut lines = vec![
         format!("{}@{}", stats.username.bold().cyan(), "Steam".bold().cyan()),
-        "─".repeat(35),
+        "─".repeat(line_width),
     ];
 
     // Account age
@@ -155,6 +157,28 @@ fn build_info_lines(stats: &SteamStats) -> Vec<String> {
             name,
             format_number(game.playtime_hours())
         ));
+    }
+
+    if !stats.recently_played.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("{}", "Recently Played (2 weeks)".bold()));
+
+        for (i, game) in stats.recently_played.iter().enumerate() {
+            let prefix = if i == stats.recently_played.len() - 1 {
+                "└─"
+            } else {
+                "├─"
+            };
+            let name = truncate(&game.name, 20);
+            let hours = game.playtime_minutes / 60;
+            let mins = game.playtime_minutes % 60;
+            let time = if hours > 0 {
+                format!("{}h {}m", hours, mins)
+            } else {
+                format!("{}m", mins)
+            };
+            lines.push(format!("{} {} {}", prefix, name, time));
+        }
     }
 
     if let Some(ref achievements) = stats.achievement_stats {

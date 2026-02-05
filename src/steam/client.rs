@@ -25,10 +25,11 @@ impl SteamClient {
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
-        let (player, games, steam_level) = tokio::try_join!(
+        let (player, games, steam_level, recently_played) = tokio::try_join!(
             self.fetch_player(),
             self.fetch_owned_games(),
-            self.fetch_steam_level()
+            self.fetch_steam_level(),
+            self.fetch_recently_played()
         )?;
 
         let unplayed = games
@@ -50,6 +51,7 @@ impl SteamClient {
             account_created: player.timecreated,
             country: player.loccountrycode,
             steam_level,
+            recently_played,
         })
     }
 
@@ -59,10 +61,11 @@ impl SteamClient {
         appids: &[u32],
         username: &str,
     ) -> Result<SteamStats> {
-        let (player, games, steam_level) = tokio::try_join!(
+        let (player, games, steam_level, recently_played) = tokio::try_join!(
             self.fetch_player(),
             self.fetch_owned_games(),
-            self.fetch_steam_level()
+            self.fetch_steam_level(),
+            self.fetch_recently_played()
         )?;
 
         // Merge: use native appids for count, but Web API for playtime data
@@ -92,6 +95,7 @@ impl SteamClient {
                     playtime_forever: games_with_playtime
                         .get(&appid)
                         .map_or(0, |g| g.playtime_forever),
+                    playtime_2weeks: 0,
                 })
                 .collect(),
         };
@@ -108,6 +112,7 @@ impl SteamClient {
             account_created: player.timecreated,
             country: player.loccountrycode,
             steam_level,
+            recently_played,
         })
     }
 
@@ -164,6 +169,32 @@ impl SteamClient {
             .context("Failed to parse steam level")?
             .response
             .player_level)
+    }
+
+    async fn fetch_recently_played(&self) -> Result<Vec<GameStat>> {
+        let url = format!(
+            "{}/IPlayerService/GetRecentlyPlayedGames/v1/?key={}&steamid={}&count=5",
+            BASE_URL, self.api_key, self.steam_id
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch recently played")?
+            .json::<super::models::RecentlyPlayedResponse>()
+            .await
+            .context("Failed to parse recently played")?;
+
+        Ok(response
+            .response
+            .games
+            .into_iter()
+            .map(|g| GameStat {
+                name: g.name.unwrap_or_else(|| format!("App {}", g.appid)),
+                playtime_minutes: g.playtime_2weeks,
+            })
+            .collect())
     }
 
     async fn fetch_achievement_stats(

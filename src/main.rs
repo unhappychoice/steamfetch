@@ -103,5 +103,15 @@ fn demo_stats() -> steam::SteamStats {
         account_created: Some(1234567890),
         country: Some("JP".to_string()),
         steam_level: Some(42),
+        recently_played: vec![
+            steam::GameStat {
+                name: "Elden Ring".to_string(),
+                playtime_minutes: 1200,
+            },
+            steam::GameStat {
+                name: "Hades II".to_string(),
+                playtime_minutes: 480,
+            },
+        ],
     }
 }

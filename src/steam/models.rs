@@ -18,6 +18,21 @@ pub struct Game {
     pub appid: u32,
     pub name: Option<String>,
     pub playtime_forever: u32,
+    #[serde(default)]
+    pub playtime_2weeks: u32,
+}
+
+// Recently Played Games API
+#[derive(Debug, Deserialize)]
+pub struct RecentlyPlayedResponse {
+    pub response: RecentlyPlayedData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecentlyPlayedData {
+    pub total_count: Option<u32>,
+    #[serde(default)]
+    pub games: Vec<Game>,
 }
 
 // Steam Level API
@@ -125,6 +140,7 @@ pub struct SteamStats {
     pub account_created: Option<u64>,
     pub country: Option<String>,
     pub steam_level: Option<u32>,
+    pub recently_played: Vec<GameStat>,
 }
 
 #[derive(Debug)]
