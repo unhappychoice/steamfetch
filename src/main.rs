@@ -93,5 +93,8 @@ fn demo_stats() -> steam::SteamStats {
                 percent: 0.1,
             }),
         }),
+        account_created: Some(1234567890),
+        country: Some("JP".to_string()),
+        steam_level: Some(42),
     }
 }
