@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-02-05
+
+### Features
+
+- feat: add verbose output to all API endpoints ([480ce46](https://github.com/unhappychoice/steamfetch/commit/480ce46))
+
+### Other Changes
+
+- chore: bump version to v0.2.8 ([4c53e11](https://github.com/unhappychoice/steamfetch/commit/4c53e11))
+
+
 ## [0.2.7] - 2026-02-05
 
 ### Features
@@ -13,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.7 ([e97e4ab](https://github.com/unhappychoice/steamfetch/commit/e97e4ab))
+- chore: bump version to v0.2.7 ([9569a65](https://github.com/unhappychoice/steamfetch/commit/9569a65))
 
 
 ## [0.2.6] - 2026-02-05
