@@ -126,23 +126,23 @@ jobs:
       - name: Create archive (Linux)
         if: contains(matrix.target, 'linux')
         run: |
+          STEAM_API_SO=$(find target -name "libsteam_api.so" | head -1)
+          cp "$STEAM_API_SO" target/${{ matrix.target }}/release/
           cd target/${{ matrix.target }}/release
-          STEAM_API_SO=$(find ../build -name "libsteam_api.so" | head -1)
-          cp "$STEAM_API_SO" .
           tar -czf ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.tar.gz steamfetch libsteam_api.so
       - name: Create archive (macOS)
         if: contains(matrix.target, 'apple')
         run: |
+          STEAM_API_DYLIB=$(find target -name "libsteam_api.dylib" | head -1)
+          cp "$STEAM_API_DYLIB" target/${{ matrix.target }}/release/
           cd target/${{ matrix.target }}/release
-          STEAM_API_DYLIB=$(find ../build -name "libsteam_api.dylib" | head -1)
-          cp "$STEAM_API_DYLIB" .
           tar -czf ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.tar.gz steamfetch libsteam_api.dylib
       - name: Create archive (Windows)
         if: matrix.os == 'windows-latest'
         run: |
+          $steamApiDll = Get-ChildItem -Path "target" -Recurse -Filter "steam_api64.dll" | Select-Object -First 1
+          Copy-Item $steamApiDll.FullName -Destination "target/${{ matrix.target }}/release/"
           cd target/${{ matrix.target }}/release
-          $steamApiDll = Get-ChildItem -Path "../build" -Recurse -Filter "steam_api64.dll" | Select-Object -First 1
-          Copy-Item $steamApiDll.FullName -Destination .
           Compress-Archive -Path steamfetch.exe,steam_api64.dll -DestinationPath ../../../steamfetch-${{ needs.release.outputs.new_version }}-${{ matrix.target }}.zip
       - name: Upload Release Asset (Unix)
         if: matrix.os != 'windows-latest'
