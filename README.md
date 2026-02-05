@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/unhappychoice/steamfetch/actions/workflows/ci.yml/badge.svg)](https://github.com/unhappychoice/steamfetch/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/steamfetch.svg)](https://crates.io/crates/steamfetch)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
 
 neofetch for Steam - Display your Steam stats in terminal with style.
 
@@ -138,4 +138,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+ISC License - see [LICENSE](LICENSE) for details.
