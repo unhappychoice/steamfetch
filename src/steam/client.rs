@@ -46,6 +46,57 @@ impl SteamClient {
         })
     }
 
+    /// Fetch stats for a specific list of AppIDs (used with Steamworks SDK)
+    pub async fn fetch_stats_for_appids(
+        &self,
+        appids: &[u32],
+        username: &str,
+    ) -> Result<SteamStats> {
+        let games = self.fetch_owned_games().await?;
+
+        // Merge: use native appids for count, but Web API for playtime data
+        let games_with_playtime: std::collections::HashMap<u32, _> =
+            games.games.iter().map(|g| (g.appid, g)).collect();
+
+        let unplayed = appids
+            .iter()
+            .filter(|id| {
+                games_with_playtime
+                    .get(id)
+                    .map_or(true, |g| g.playtime_forever == 0)
+            })
+            .count() as u32;
+
+        let total_playtime = games.games.iter().map(|g| g.playtime_forever).sum();
+        let top_games = self.extract_top_games(&games);
+
+        // Create pseudo OwnedGamesData for achievement scanning
+        let native_games = super::models::OwnedGamesData {
+            game_count: appids.len() as u32,
+            games: appids
+                .iter()
+                .map(|&appid| super::models::Game {
+                    appid,
+                    name: games_with_playtime.get(&appid).and_then(|g| g.name.clone()),
+                    playtime_forever: games_with_playtime
+                        .get(&appid)
+                        .map_or(0, |g| g.playtime_forever),
+                })
+                .collect(),
+        };
+
+        let achievement_stats = self.fetch_achievement_stats(&native_games).await;
+
+        Ok(SteamStats {
+            username: username.to_string(),
+            game_count: appids.len() as u32,
+            unplayed_count: unplayed,
+            total_playtime_minutes: total_playtime,
+            top_games,
+            achievement_stats,
+        })
+    }
+
     async fn fetch_player(&self) -> Result<super::models::Player> {
         let url = format!(
             "{}/ISteamUser/GetPlayerSummaries/v2/?key={}&steamids={}",
