@@ -8,50 +8,48 @@ pub fn render(stats: &SteamStats) {
 
     println!();
     for (i, logo_line) in logo_lines.iter().enumerate() {
-        let info = info_lines.get(i).map(String::as_str).unwrap_or("");
-        println!("{}  {}", logo_line, info);
+        // Offset info by 1 line to align vertically
+        let info = if i == 0 {
+            ""
+        } else {
+            info_lines.get(i - 1).map(String::as_str).unwrap_or("")
+        };
+        println!("{}   {}", logo_line, info);
     }
 
-    if info_lines.len() > logo_lines.len() {
-        render_remaining_info(&info_lines[logo_lines.len()..], logo_width());
+    if info_lines.len() > logo_lines.len() - 1 {
+        render_remaining_info(&info_lines[logo_lines.len() - 1..], logo_width());
     }
     println!();
 }
 
 fn build_logo() -> Vec<String> {
-    let width = logo_width();
-    let lines: Vec<(&str, bool)> = vec![
-        ("              .,,,,.              ", true),
-        ("        .,'onNMMMMMNNnn',.        ", true),
-        ("     .'oNMANKMMMMMMMMMMMNNn'.     ", true),
-        ("   .'ANMMMMMMMXKNNWWWPFFWNNMNn.   ", true),
-        ("  ;NNMMMMMMMMMMNWW'' ,.., 'WMMM,  ", true),
-        (" ;NMMMMV+##+VNWWW' .+;'':+, 'WMW, ", true),
-        (",VNNWP+######+WW,  +:    :+, +MMM,", true),
-        ("'+#############,   +.    ,+' +NMMM", false),
-        ("  '*#########*'     '*,,*' .+NMMMM", false),
-        ("     `'*###*'          ,.,;###+WNM", false),
-        ("         .,;;,      .;##########+W", false),
-        (",',.         ';  ,+##############'", false),
-        (" '###+. :,. .,; ,###############' ", false),
-        ("  '####.. `'' .,###############'  ", false),
-        ("    '#####+++################'    ", false),
-        ("      '*##################*'      ", false),
-        ("         ''*##########*''         ", false),
-        ("              ''''''              ", false),
+    let lines = vec![
+        "              .,,,,.              ",
+        "        .,'############',.        ",
+        "     .'####################'.     ",
+        "   .'#########################.   ",
+        "  ;###############'' ,.., '####,  ",
+        " ;###############' .#;'':#, '###, ",
+        ",###############,  #:    :#, ####,",
+        "'##############,   #.    ,#' #####",
+        "  '*#########*'     '*,,*' .######",
+        "     `'*###*'          ,.,;#######",
+        "         .,;;,      .;############",
+        ",',.         ';  ,###############'",
+        " '####. :,. .,; ,###############' ",
+        "  '####.. `'' .,###############'  ",
+        "    '########################'    ",
+        "      '*##################*'      ",
+        "         ''*##########*''         ",
+        "              ''''''              ",
     ];
 
-    lines
-        .into_iter()
-        .map(|(text, is_magenta)| {
-            let padded = format!("{:<width$}", text, width = width);
-            if is_magenta {
-                format!("{}", padded.magenta())
-            } else {
-                format!("{}", padded.white())
-            }
-        })
-        .collect()
+    lines.into_iter().map(colorize_logo_line).collect()
+}
+
+fn colorize_logo_line(line: &str) -> String {
+    format!("\x1b[38;2;27;75;103m{}\x1b[0m", line) // #1b4b67
 }
 
 fn logo_width() -> usize {
