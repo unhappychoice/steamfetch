@@ -20,6 +20,17 @@ pub struct Game {
     pub playtime_forever: u32,
 }
 
+// Steam Level API
+#[derive(Debug, Deserialize)]
+pub struct SteamLevelResponse {
+    pub response: SteamLevelData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SteamLevelData {
+    pub player_level: Option<u32>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlayerSummaryResponse {
     pub response: PlayerSummaryData,
@@ -33,6 +44,8 @@ pub struct PlayerSummaryData {
 #[derive(Debug, Deserialize)]
 pub struct Player {
     pub personaname: String,
+    pub timecreated: Option<u64>,
+    pub loccountrycode: Option<String>,
 }
 
 // Achievements API
@@ -109,6 +122,9 @@ pub struct SteamStats {
     pub total_playtime_minutes: u32,
     pub top_games: Vec<GameStat>,
     pub achievement_stats: Option<AchievementStats>,
+    pub account_created: Option<u64>,
+    pub country: Option<String>,
+    pub steam_level: Option<u32>,
 }
 
 #[derive(Debug)]

@@ -25,7 +25,11 @@ impl SteamClient {
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
-        let (player, games) = tokio::try_join!(self.fetch_player(), self.fetch_owned_games())?;
+        let (player, games, steam_level) = tokio::try_join!(
+            self.fetch_player(),
+            self.fetch_owned_games(),
+            self.fetch_steam_level()
+        )?;
 
         let unplayed = games
             .games
@@ -43,6 +47,9 @@ impl SteamClient {
             total_playtime_minutes: total_playtime,
             top_games,
             achievement_stats,
+            account_created: player.timecreated,
+            country: player.loccountrycode,
+            steam_level,
         })
     }
 
@@ -52,7 +59,11 @@ impl SteamClient {
         appids: &[u32],
         username: &str,
     ) -> Result<SteamStats> {
-        let games = self.fetch_owned_games().await?;
+        let (player, games, steam_level) = tokio::try_join!(
+            self.fetch_player(),
+            self.fetch_owned_games(),
+            self.fetch_steam_level()
+        )?;
 
         // Merge: use native appids for count, but Web API for playtime data
         let games_with_playtime: std::collections::HashMap<u32, _> =
@@ -94,6 +105,9 @@ impl SteamClient {
             total_playtime_minutes: total_playtime,
             top_games,
             achievement_stats,
+            account_created: player.timecreated,
+            country: player.loccountrycode,
+            steam_level,
         })
     }
 
@@ -132,6 +146,24 @@ impl SteamClient {
             .await
             .context("Failed to parse owned games")?
             .response)
+    }
+
+    async fn fetch_steam_level(&self) -> Result<Option<u32>> {
+        let url = format!(
+            "{}/IPlayerService/GetSteamLevel/v1/?key={}&steamid={}",
+            BASE_URL, self.api_key, self.steam_id
+        );
+        Ok(self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch steam level")?
+            .json::<super::models::SteamLevelResponse>()
+            .await
+            .context("Failed to parse steam level")?
+            .response
+            .player_level)
     }
 
     async fn fetch_achievement_stats(
@@ -259,7 +291,7 @@ impl SteamClient {
 
         sorted
             .into_iter()
-            .take(3)
+            .take(5)
             .map(|g| GameStat {
                 name: g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
                 playtime_minutes: g.playtime_forever,
