@@ -105,8 +105,6 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
           - target: x86_64-pc-windows-msvc
             os: windows-latest
           - target: x86_64-apple-darwin
