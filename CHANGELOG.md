@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-02-05
+
+### Bug Fixes
+
+- fix: use sequential API requests to avoid rate limiting ([6681aca](https://github.com/unhappychoice/steamfetch/commit/6681aca))
+
+### Other Changes
+
+- chore: bump version to v0.2.9 ([ecee622](https://github.com/unhappychoice/steamfetch/commit/ecee622))
+
+
 ## [0.2.8] - 2026-02-05
 
 ### Features
@@ -13,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.8 ([4c53e11](https://github.com/unhappychoice/steamfetch/commit/4c53e11))
+- chore: bump version to v0.2.8 ([5754af1](https://github.com/unhappychoice/steamfetch/commit/5754af1))
 
 
 ## [0.2.7] - 2026-02-05
