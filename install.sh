@@ -68,6 +68,9 @@ detect_platform() {
                     ;;
             esac
             ;;
+        MINGW*|MSYS*|CYGWIN*)
+            echo "x86_64-pc-windows-msvc"
+            ;;
         *)
             echo "Unsupported OS: $OS" >&2
             exit 1
@@ -86,32 +89,52 @@ main() {
 
     echo "Installing $BINARY_NAME $VERSION for $PLATFORM..."
 
-    DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/${BINARY_NAME}-${VERSION}-${PLATFORM}.tar.gz"
     TEMP_DIR="$(mktemp -d)"
-
     trap 'rm -rf "$TEMP_DIR"' EXIT
 
-    echo "Downloading from $DOWNLOAD_URL..."
-    curl -sL "$DOWNLOAD_URL" | tar xz -C "$TEMP_DIR"
+    if [[ "$PLATFORM" == *"windows"* ]]; then
+        DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/${BINARY_NAME}-${VERSION}-${PLATFORM}.zip"
+        echo "Downloading from $DOWNLOAD_URL..."
+        curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/steamfetch.zip"
+        unzip -q "$TEMP_DIR/steamfetch.zip" -d "$TEMP_DIR"
+        rm "$TEMP_DIR/steamfetch.zip"
+        INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+    else
+        DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/${BINARY_NAME}-${VERSION}-${PLATFORM}.tar.gz"
+        echo "Downloading from $DOWNLOAD_URL..."
+        curl -sL "$DOWNLOAD_URL" | tar xz -C "$TEMP_DIR"
+        INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+    fi
 
-    INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
     mkdir -p "$INSTALL_DIR"
 
     # Install binary and Steam API library
     mv "$TEMP_DIR"/* "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    
+    if [[ "$PLATFORM" != *"windows"* ]]; then
+        chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    fi
 
     echo "Successfully installed $BINARY_NAME to $INSTALL_DIR/"
     echo ""
     echo "Make sure $INSTALL_DIR is in your PATH:"
-    echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
+    if [[ "$PLATFORM" == *"windows"* ]]; then
+        echo "  Add $INSTALL_DIR to your PATH environment variable"
+    else
+        echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
+    fi
     echo ""
     echo "Setup Steam API key:"
     echo "  1. Get your API key from: https://steamcommunity.com/dev/apikey"
     echo "  2. Find your Steam ID from: https://steamid.io"
     echo "  3. Set environment variables:"
-    echo "     export STEAM_API_KEY=\"your_api_key\""
-    echo "     export STEAM_ID=\"your_steam_id\""
+    if [[ "$PLATFORM" == *"windows"* ]]; then
+        echo "     set STEAM_API_KEY=your_api_key"
+        echo "     set STEAM_ID=your_steam_id"
+    else
+        echo "     export STEAM_API_KEY=\"your_api_key\""
+        echo "     export STEAM_ID=\"your_steam_id\""
+    fi
 }
 
 main "$@"
