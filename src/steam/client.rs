@@ -32,12 +32,11 @@ impl SteamClient {
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
-        let (player, games, steam_level, recently_played) = tokio::try_join!(
-            self.fetch_player(),
-            self.fetch_owned_games(),
-            self.fetch_steam_level(),
-            self.fetch_recently_played()
-        )?;
+        // Sequential requests to avoid Steam API rate limiting
+        let player = self.fetch_player().await?;
+        let games = self.fetch_owned_games().await?;
+        let steam_level = self.fetch_steam_level().await?;
+        let recently_played = self.fetch_recently_played().await?;
 
         let unplayed = games
             .games
@@ -67,12 +66,11 @@ impl SteamClient {
         appids: &[u32],
         username: &str,
     ) -> Result<SteamStats> {
-        let (player, games, steam_level, recently_played) = tokio::try_join!(
-            self.fetch_player(),
-            self.fetch_owned_games(),
-            self.fetch_steam_level(),
-            self.fetch_recently_played()
-        )?;
+        // Sequential requests to avoid Steam API rate limiting
+        let player = self.fetch_player().await?;
+        let games = self.fetch_owned_games().await?;
+        let steam_level = self.fetch_steam_level().await?;
+        let recently_played = self.fetch_recently_played().await?;
 
         // Merge: use native appids for count, but Web API for playtime data
         let games_with_playtime: std::collections::HashMap<u32, _> =
