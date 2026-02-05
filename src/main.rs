@@ -53,8 +53,15 @@ async fn fetch_native_stats(native: NativeSteamClient) -> Result<steam::SteamSta
     let all_appids = steam::native::fetch_all_game_appids().await?;
     let owned_appids = native.get_owned_appids(&all_appids);
 
-    let api_key =
-        std::env::var("STEAM_API_KEY").map_err(|_| anyhow::anyhow!("STEAM_API_KEY not set"))?;
+    let api_key = std::env::var("STEAM_API_KEY").map_err(|_| {
+        anyhow::anyhow!(
+            "STEAM_API_KEY not set.\n\n\
+            To get your API key:\n  \
+            1. Visit https://steamcommunity.com/dev/apikey\n  \
+            2. Log in and create a key\n  \
+            3. Set it: export STEAM_API_KEY=\"your-key\""
+        )
+    })?;
     let client = SteamClient::new(api_key, steam_id);
     client
         .fetch_stats_for_appids(&owned_appids, &username)
