@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-05
+
+### Bug Fixes
+
+- fix: use autostash for git pull in release workflow ([fbb3c39](https://github.com/unhappychoice/steamfetch/commit/fbb3c39))
+- fix: stage changes before git pull in release workflow ([8612b18](https://github.com/unhappychoice/steamfetch/commit/8612b18))
+- fix: pull latest before committing in release workflow ([202de07](https://github.com/unhappychoice/steamfetch/commit/202de07))
+
+### Other Changes
+
+- chore: bump version to v0.2.1 ([94f8537](https://github.com/unhappychoice/steamfetch/commit/94f8537))
+- ci: remove ARM64 Linux from release targets (Steam unsupported) ([75165f1](https://github.com/unhappychoice/steamfetch/commit/75165f1))
+
+
 ## [0.2.0] - 2026-02-05
 
 ### Features
@@ -29,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.0 ([15294eb](https://github.com/unhappychoice/steamfetch/commit/15294eb))
+- chore: bump version to v0.2.0 ([a504f2a](https://github.com/unhappychoice/steamfetch/commit/a504f2a))
 - ci: add release and CI workflows ([f1f81da](https://github.com/unhappychoice/steamfetch/commit/f1f81da))
 - chore: update demo stats with new fields ([da76d9f](https://github.com/unhappychoice/steamfetch/commit/da76d9f))
 - docs: update README with SDK usage and features ([c23437d](https://github.com/unhappychoice/steamfetch/commit/c23437d))
