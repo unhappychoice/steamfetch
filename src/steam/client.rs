@@ -169,16 +169,34 @@ impl SteamClient {
             "{}/IPlayerService/GetOwnedGames/v1/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1",
             BASE_URL, self.api_key, self.steam_id
         );
-        Ok(self
+        if self.verbose {
+            eprintln!("[verbose] Fetching owned games...");
+        }
+        let response = self
             .client
             .get(&url)
             .send()
             .await
-            .context("Failed to fetch owned games")?
-            .json::<OwnedGamesResponse>()
+            .context("Failed to fetch owned games")?;
+
+        let status = response.status();
+        let body = response
+            .text()
             .await
-            .context("Failed to parse owned games")?
-            .response)
+            .context("Failed to read response body")?;
+
+        if self.verbose {
+            eprintln!("[verbose] Owned games API status: {}", status);
+            eprintln!(
+                "[verbose] Owned games API body: {}",
+                &body[..body.len().min(500)]
+            );
+        }
+
+        let parsed: OwnedGamesResponse =
+            serde_json::from_str(&body).context("Failed to parse owned games")?;
+
+        Ok(parsed.response)
     }
 
     async fn fetch_steam_level(&self) -> Result<Option<u32>> {
@@ -186,17 +204,30 @@ impl SteamClient {
             "{}/IPlayerService/GetSteamLevel/v1/?key={}&steamid={}",
             BASE_URL, self.api_key, self.steam_id
         );
-        Ok(self
+        if self.verbose {
+            eprintln!("[verbose] Fetching steam level...");
+        }
+        let response = self
             .client
             .get(&url)
             .send()
             .await
-            .context("Failed to fetch steam level")?
-            .json::<super::models::SteamLevelResponse>()
+            .context("Failed to fetch steam level")?;
+
+        let status = response.status();
+        let body = response
+            .text()
             .await
-            .context("Failed to parse steam level")?
-            .response
-            .player_level)
+            .context("Failed to read response body")?;
+
+        if self.verbose {
+            eprintln!("[verbose] Steam level API status: {}", status);
+        }
+
+        let parsed: super::models::SteamLevelResponse =
+            serde_json::from_str(&body).context("Failed to parse steam level")?;
+
+        Ok(parsed.response.player_level)
     }
 
     async fn fetch_recently_played(&self) -> Result<Vec<GameStat>> {
@@ -204,17 +235,30 @@ impl SteamClient {
             "{}/IPlayerService/GetRecentlyPlayedGames/v1/?key={}&steamid={}&count=5",
             BASE_URL, self.api_key, self.steam_id
         );
+        if self.verbose {
+            eprintln!("[verbose] Fetching recently played...");
+        }
         let response = self
             .client
             .get(&url)
             .send()
             .await
-            .context("Failed to fetch recently played")?
-            .json::<super::models::RecentlyPlayedResponse>()
-            .await
-            .context("Failed to parse recently played")?;
+            .context("Failed to fetch recently played")?;
 
-        Ok(response
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
+
+        if self.verbose {
+            eprintln!("[verbose] Recently played API status: {}", status);
+        }
+
+        let parsed: super::models::RecentlyPlayedResponse =
+            serde_json::from_str(&body).context("Failed to parse recently played")?;
+
+        Ok(parsed
             .response
             .games
             .into_iter()
