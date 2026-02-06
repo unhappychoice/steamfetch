@@ -68,27 +68,24 @@ impl SteamClient {
     ) -> Result<SteamStats> {
         // Sequential requests to avoid Steam API rate limiting
         let player = self.fetch_player().await?;
-        let games = self.fetch_owned_games().await?;
+        let games = self.fetch_owned_games_for_appids(appids).await?;
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
 
-        // Merge: use native appids for count, but Web API for playtime data
-        let games_with_playtime: std::collections::HashMap<u32, _> =
-            games.games.iter().map(|g| (g.appid, g)).collect();
-
-        let unplayed = appids
+        // Count unplayed from API response (only games with playtime data)
+        let unplayed = games
+            .games
             .iter()
-            .filter(|id| {
-                games_with_playtime
-                    .get(id)
-                    .is_none_or(|g| g.playtime_forever == 0)
-            })
+            .filter(|g| g.playtime_forever == 0)
             .count() as u32;
 
         let total_playtime = games.games.iter().map(|g| g.playtime_forever).sum();
         let top_games = self.extract_top_games(&games);
 
-        // Create pseudo OwnedGamesData for achievement scanning
+        // Create OwnedGamesData for achievement scanning with native appid count
+        let games_with_playtime: std::collections::HashMap<u32, _> =
+            games.games.iter().map(|g| (g.appid, g)).collect();
+
         let native_games = super::models::OwnedGamesData {
             game_count: appids.len() as u32,
             games: appids
@@ -163,10 +160,42 @@ impl SteamClient {
     }
 
     async fn fetch_owned_games(&self) -> Result<super::models::OwnedGamesData> {
-        let url = format!(
+        self.fetch_owned_games_filtered(None).await
+    }
+
+    async fn fetch_owned_games_for_appids(
+        &self,
+        appids: &[u32],
+    ) -> Result<super::models::OwnedGamesData> {
+        const CHUNK_SIZE: usize = 100;
+
+        let mut all_games = Vec::new();
+        for chunk in appids.chunks(CHUNK_SIZE) {
+            let data = self.fetch_owned_games_filtered(Some(chunk)).await?;
+            all_games.extend(data.games);
+        }
+
+        Ok(super::models::OwnedGamesData {
+            game_count: all_games.len() as u32,
+            games: all_games,
+        })
+    }
+
+    async fn fetch_owned_games_filtered(
+        &self,
+        appids_filter: Option<&[u32]>,
+    ) -> Result<super::models::OwnedGamesData> {
+        let mut url = format!(
             "{}/IPlayerService/GetOwnedGames/v1/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1",
             BASE_URL, self.api_key, self.steam_id
         );
+
+        if let Some(appids) = appids_filter {
+            for (i, appid) in appids.iter().enumerate() {
+                url.push_str(&format!("&appids_filter%5B{}%5D={}", i, appid));
+            }
+        }
+
         if self.verbose {
             eprintln!("[verbose] Fetching owned games...");
         }
