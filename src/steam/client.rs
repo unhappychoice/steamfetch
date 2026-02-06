@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
+use std::io::{self, Write};
 use std::time::Duration;
 
 use super::models::{
@@ -10,6 +11,15 @@ use super::models::{
 use crate::cache::AchievementCache;
 
 const BASE_URL: &str = "https://api.steampowered.com";
+
+fn print_status(msg: &str) {
+    eprint!("\r\x1b[K{}", msg);
+    let _ = io::stderr().flush();
+}
+
+fn print_status_done(msg: &str) {
+    eprintln!("\r\x1b[K{}", msg);
+}
 
 pub struct SteamClient {
     client: Client,
@@ -40,11 +50,18 @@ impl SteamClient {
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
-        // Sequential requests to avoid Steam API rate limiting
+        print_status("Fetching player info...");
         let player = self.fetch_player().await?;
+        print_status_done(&format!("Fetched player: {}", player.personaname));
+
+        print_status("Fetching owned games...");
         let games = self.fetch_owned_games().await?;
+        print_status_done(&format!("Found {} games", games.game_count));
+
+        print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
+        print_status_done("Fetched account details");
 
         let unplayed = games
             .games
@@ -74,11 +91,18 @@ impl SteamClient {
         appids: &[u32],
         username: &str,
     ) -> Result<SteamStats> {
-        // Sequential requests to avoid Steam API rate limiting
+        print_status("Fetching player info...");
         let player = self.fetch_player().await?;
+        print_status_done(&format!("Fetched player: {}", player.personaname));
+
+        print_status("Fetching owned games...");
         let games = self.fetch_owned_games_for_appids(appids).await?;
+        print_status_done(&format!("Found {} games", appids.len()));
+
+        print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
+        print_status_done("Fetched account details");
 
         // Count unplayed from API response (only games with playtime data)
         let unplayed = games
@@ -313,11 +337,12 @@ impl SteamClient {
     ) -> Option<AchievementStats> {
         let mut cache = AchievementCache::load();
         let all_games: Vec<_> = games.games.iter().collect();
+        let total_games = all_games.len();
 
-        let pb = ProgressBar::new(all_games.len() as u64);
+        let pb = ProgressBar::new(total_games as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} games")
+                .template("{msg} [{bar:30.cyan/blue}] {pos}/{len}")
                 .unwrap()
                 .progress_chars("#>-"),
         );
@@ -326,9 +351,10 @@ impl SteamClient {
         let mut total_possible = 0u32;
         let mut perfect_games = 0u32;
         let mut rarest_candidates: Vec<RarestAchievement> = Vec::new();
+        let mut cached_count = 0u32;
+        let mut fetched_count = 0u32;
 
         for game in &all_games {
-            pb.inc(1);
             let game_name = game
                 .name
                 .clone()
@@ -336,6 +362,7 @@ impl SteamClient {
 
             // Check cache first
             if let Some(cached) = cache.get(game.appid, game.rtime_last_played) {
+                cached_count += 1;
                 total_achieved += cached.achieved;
                 total_possible += cached.total;
                 if cached.achieved == cached.total && cached.total > 0 {
@@ -348,10 +375,22 @@ impl SteamClient {
                         percent,
                     });
                 }
+                pb.set_message(format!(
+                    "Achievements ({} cached, {} fetched)",
+                    cached_count, fetched_count
+                ));
+                pb.inc(1);
                 continue;
             }
 
             // Fetch from API
+            fetched_count += 1;
+            pb.set_message(format!(
+                "Achievements ({} cached, {} fetched)",
+                cached_count, fetched_count
+            ));
+            pb.inc(1);
+
             if let Some(result) = self
                 .fetch_game_achievements(game.appid, game_name.clone())
                 .await
@@ -378,6 +417,10 @@ impl SteamClient {
         }
 
         pb.finish_and_clear();
+        print_status_done(&format!(
+            "Fetched achievements ({} cached, {} fetched)",
+            cached_count, fetched_count
+        ));
         cache.save();
 
         // Sort by percent, then by game name, then by achievement name for deterministic results
