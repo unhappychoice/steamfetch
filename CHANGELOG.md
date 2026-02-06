@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-06
+
+### Features
+
+- feat: auto-generate config file on first run ([0b04efe](https://github.com/unhappychoice/steamfetch/commit/0b04efe))
+- feat: add config file support (#16) ([575cb9d](https://github.com/unhappychoice/steamfetch/commit/575cb9d))
+
+### Bug Fixes
+
+- fix: use API key only when Native SDK provides steam_id ([6bc15fc](https://github.com/unhappychoice/steamfetch/commit/6bc15fc))
+
+### Other Changes
+
+- chore: bump version to v0.3.0 ([45212f8](https://github.com/unhappychoice/steamfetch/commit/45212f8))
+
+
 ## [0.2.9] - 2026-02-05
 
 ### Bug Fixes
@@ -13,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.2.9 ([ecee622](https://github.com/unhappychoice/steamfetch/commit/ecee622))
+- chore: bump version to v0.2.9 ([e03071c](https://github.com/unhappychoice/steamfetch/commit/e03071c))
 
 
 ## [0.2.8] - 2026-02-05
