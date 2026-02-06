@@ -334,13 +334,15 @@ impl SteamClient {
         let all_games: Vec<_> = games.games.iter().collect();
         let total_games = all_games.len();
 
+        clear_status();
         let pb = ProgressBar::new(total_games as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{msg} [{bar:30.cyan/blue}] {pos}/{len}")
+                .template("\r{msg} [{bar:30.cyan/blue}] {pos}/{len}")
                 .unwrap()
                 .progress_chars("#>-"),
         );
+        pb.set_message("Achievements (0 cached, 0 fetched)");
 
         let mut total_achieved = 0u32;
         let mut total_possible = 0u32;
@@ -370,21 +372,21 @@ impl SteamClient {
                         percent,
                     });
                 }
+                pb.inc(1);
                 pb.set_message(format!(
                     "Achievements ({} cached, {} fetched)",
                     cached_count, fetched_count
                 ));
-                pb.inc(1);
                 continue;
             }
 
             // Fetch from API
             fetched_count += 1;
+            pb.inc(1);
             pb.set_message(format!(
                 "Achievements ({} cached, {} fetched)",
                 cached_count, fetched_count
             ));
-            pb.inc(1);
 
             if let Some(result) = self
                 .fetch_game_achievements(game.appid, game_name.clone())
