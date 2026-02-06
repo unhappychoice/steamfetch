@@ -17,8 +17,9 @@ fn print_status(msg: &str) {
     let _ = io::stderr().flush();
 }
 
-fn print_status_done(msg: &str) {
-    eprintln!("\r\x1b[K{}", msg);
+fn clear_status() {
+    eprint!("\r\x1b[K");
+    let _ = io::stderr().flush();
 }
 
 pub struct SteamClient {
@@ -52,16 +53,13 @@ impl SteamClient {
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
         print_status("Fetching player info...");
         let player = self.fetch_player().await?;
-        print_status_done(&format!("Fetched player: {}", player.personaname));
 
         print_status("Fetching owned games...");
         let games = self.fetch_owned_games().await?;
-        print_status_done(&format!("Found {} games", games.game_count));
 
         print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
-        print_status_done("Fetched account details");
 
         let unplayed = games
             .games
@@ -93,16 +91,13 @@ impl SteamClient {
     ) -> Result<SteamStats> {
         print_status("Fetching player info...");
         let player = self.fetch_player().await?;
-        print_status_done(&format!("Fetched player: {}", player.personaname));
 
         print_status("Fetching owned games...");
         let games = self.fetch_owned_games_for_appids(appids).await?;
-        print_status_done(&format!("Found {} games", appids.len()));
 
         print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
-        print_status_done("Fetched account details");
 
         // Count unplayed from API response (only games with playtime data)
         let unplayed = games
@@ -417,10 +412,7 @@ impl SteamClient {
         }
 
         pb.finish_and_clear();
-        print_status_done(&format!(
-            "Fetched achievements ({} cached, {} fetched)",
-            cached_count, fetched_count
-        ));
+        clear_status();
         cache.save();
 
         // Sort by percent, then by game name, then by achievement name for deterministic results
