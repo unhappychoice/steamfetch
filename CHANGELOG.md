@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-02-06
+
+### Bug Fixes
+
+- fix: use appids_filter for accurate unplayed count (#17) ([c477d47](https://github.com/unhappychoice/steamfetch/commit/c477d47))
+
+### Other Changes
+
+- chore: bump version to v0.3.1 ([e159919](https://github.com/unhappychoice/steamfetch/commit/e159919))
+
+
 ## [0.3.0] - 2026-02-06
 
 ### Features
@@ -18,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.3.0 ([45212f8](https://github.com/unhappychoice/steamfetch/commit/45212f8))
+- chore: bump version to v0.3.0 ([23460ee](https://github.com/unhappychoice/steamfetch/commit/23460ee))
 
 
 ## [0.2.9] - 2026-02-05
