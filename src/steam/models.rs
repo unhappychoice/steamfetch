@@ -20,6 +20,8 @@ pub struct Game {
     pub playtime_forever: u32,
     #[serde(default)]
     pub playtime_2weeks: u32,
+    #[serde(default)]
+    pub rtime_last_played: u64,
 }
 
 // Recently Played Games API
