@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use reqwest::Client;
+use std::time::Duration;
 
 use super::models::{
     AchievementStats, AchievementsResponse, GameStat, GlobalAchievementsResponse,
@@ -18,8 +19,14 @@ pub struct SteamClient {
 
 impl SteamClient {
     pub fn new(api_key: String, steam_id: String) -> Self {
+        let client = Client::builder()
+            .pool_idle_timeout(Duration::from_secs(1))
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::new(),
+            client,
             api_key,
             steam_id,
             verbose: false,
@@ -311,7 +318,7 @@ impl SteamClient {
         let mut total_achieved = 0u32;
         let mut total_possible = 0u32;
         let mut perfect_games = 0u32;
-        let mut rarest: Option<RarestAchievement> = None;
+        let mut rarest_candidates: Vec<RarestAchievement> = Vec::new();
 
         for result in results.into_iter().flatten() {
             total_achieved += result.achieved;
@@ -322,13 +329,18 @@ impl SteamClient {
             }
 
             if let Some(r) = result.rarest {
-                match &rarest {
-                    None => rarest = Some(r),
-                    Some(current) if r.percent < current.percent => rarest = Some(r),
-                    _ => {}
-                }
+                rarest_candidates.push(r);
             }
         }
+
+        // Sort by percent, then by game name, then by achievement name for deterministic results
+        let rarest = rarest_candidates.into_iter().min_by(|a, b| {
+            a.percent
+                .partial_cmp(&b.percent)
+                .unwrap()
+                .then_with(|| a.game.cmp(&b.game))
+                .then_with(|| a.name.cmp(&b.name))
+        });
 
         (total_possible > 0).then_some(AchievementStats {
             total_achieved,
