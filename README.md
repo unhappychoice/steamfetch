@@ -8,32 +8,7 @@ neofetch for Steam - Display your Steam stats in terminal with style.
 
 ## Screenshot
 
-```
-              .,,,,.                 
-        .,'############',.           unhappychoice@Steam
-     .'####################'.        ──────────────────────────────────────────────────
-   .'#########################.      Member:       12 years        Eternal Witness
-  ;###############'' ,.., '####,     Level:        74              Elite
- ;###############' .#;'':#, '###,    Games:        356             Dimension Hoarder
-,###############,  #:    :#, ####,   Unplayed:     101 (28%)       I'll Play Tomorrow
-'##############,   #.    ,#' #####   Playtime:     15,932h         Hermit of Eternity
-  '*#########*'     '*,,*' .######   Perfect:      257             Platinum Overlord
-     `'*###*'          ,.,;#######   Achievements: 38,580 (86%)    Chaos Incarnate
-          .,;;,      .;############  
-,',.         ';  ,###############'   Top Played
- '####. :,. .,; ,###############'    ├─ Idle Sphere          3,261h
-  '####.. `'' .,###############'     ├─ Idle Cave Miner      1,162h
-    '########################'       ├─ Revolution Idle      984h
-      '*##################*'         ├─ PlanetSide 2         764h
-         ''*##########*''            └─ Left 4 Dead 2        665h
-              ''''''                 
-                                     Recently Played (2 weeks)
-                                     ├─ Elden Ring           20h 0m
-                                     └─ Hades II             8h 0m
-                                     
-                                     Rarest: "One-stroke" (0.1%)
-                                       in Q  REMASTERED
-```
+![screenshot](docs/screenshot.png)
 
 ## Installation
 
