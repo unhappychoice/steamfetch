@@ -1,3 +1,4 @@
+mod cache;
 mod config;
 mod display;
 mod steam;

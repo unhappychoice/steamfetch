@@ -1,14 +1,26 @@
 use anyhow::{Context, Result};
-use futures::future::join_all;
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
+use std::io::{self, Write};
 use std::time::Duration;
 
 use super::models::{
     AchievementStats, AchievementsResponse, GameStat, GlobalAchievementsResponse,
     OwnedGamesResponse, PlayerSummaryResponse, RarestAchievement, SteamStats,
 };
+use crate::cache::AchievementCache;
 
 const BASE_URL: &str = "https://api.steampowered.com";
+
+fn print_status(msg: &str) {
+    eprint!("\r\x1b[K{}", msg);
+    let _ = io::stderr().flush();
+}
+
+fn clear_status() {
+    eprint!("\r\x1b[K");
+    let _ = io::stderr().flush();
+}
 
 pub struct SteamClient {
     client: Client,
@@ -39,9 +51,13 @@ impl SteamClient {
     }
 
     pub async fn fetch_stats(&self) -> Result<SteamStats> {
-        // Sequential requests to avoid Steam API rate limiting
+        print_status("Fetching player info...");
         let player = self.fetch_player().await?;
+
+        print_status("Fetching owned games...");
         let games = self.fetch_owned_games().await?;
+
+        print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
 
@@ -73,9 +89,13 @@ impl SteamClient {
         appids: &[u32],
         username: &str,
     ) -> Result<SteamStats> {
-        // Sequential requests to avoid Steam API rate limiting
+        print_status("Fetching player info...");
         let player = self.fetch_player().await?;
+
+        print_status("Fetching owned games...");
         let games = self.fetch_owned_games_for_appids(appids).await?;
+
+        print_status("Fetching account details...");
         let steam_level = self.fetch_steam_level().await?;
         let recently_played = self.fetch_recently_played().await?;
 
@@ -104,6 +124,9 @@ impl SteamClient {
                         .get(&appid)
                         .map_or(0, |g| g.playtime_forever),
                     playtime_2weeks: 0,
+                    rtime_last_played: games_with_playtime
+                        .get(&appid)
+                        .map_or(0, |g| g.rtime_last_played),
                 })
                 .collect(),
         };
@@ -307,31 +330,92 @@ impl SteamClient {
         &self,
         games: &super::models::OwnedGamesData,
     ) -> Option<AchievementStats> {
-        let all_games = self.get_all_games(games);
-        let results = join_all(
-            all_games
-                .iter()
-                .map(|(appid, name)| self.fetch_game_achievements(*appid, name.clone())),
-        )
-        .await;
+        let mut cache = AchievementCache::load();
+        let all_games: Vec<_> = games.games.iter().collect();
+        let total_games = all_games.len();
+
+        clear_status();
+        let pb = ProgressBar::new(total_games as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("\r{msg} [{bar:30.cyan/blue}] {pos}/{len}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb.set_message("Achievements (0 cached, 0 fetched)");
 
         let mut total_achieved = 0u32;
         let mut total_possible = 0u32;
         let mut perfect_games = 0u32;
         let mut rarest_candidates: Vec<RarestAchievement> = Vec::new();
+        let mut cached_count = 0u32;
+        let mut fetched_count = 0u32;
 
-        for result in results.into_iter().flatten() {
-            total_achieved += result.achieved;
-            total_possible += result.total;
+        for game in &all_games {
+            let game_name = game
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("App {}", game.appid));
 
-            if result.achieved == result.total && result.total > 0 {
-                perfect_games += 1;
+            // Check cache first
+            if let Some(cached) = cache.get(game.appid, game.rtime_last_played) {
+                cached_count += 1;
+                total_achieved += cached.achieved;
+                total_possible += cached.total;
+                if cached.achieved == cached.total && cached.total > 0 {
+                    perfect_games += 1;
+                }
+                if let (Some(name), Some(percent)) = (&cached.rarest_name, cached.rarest_percent) {
+                    rarest_candidates.push(RarestAchievement {
+                        name: name.clone(),
+                        game: game_name,
+                        percent,
+                    });
+                }
+                pb.inc(1);
+                pb.set_message(format!(
+                    "Achievements ({} cached, {} fetched)",
+                    cached_count, fetched_count
+                ));
+                continue;
             }
 
-            if let Some(r) = result.rarest {
-                rarest_candidates.push(r);
+            // Fetch from API
+            fetched_count += 1;
+            pb.inc(1);
+            pb.set_message(format!(
+                "Achievements ({} cached, {} fetched)",
+                cached_count, fetched_count
+            ));
+
+            if let Some(result) = self
+                .fetch_game_achievements(game.appid, game_name.clone())
+                .await
+            {
+                total_achieved += result.achieved;
+                total_possible += result.total;
+                if result.achieved == result.total && result.total > 0 {
+                    perfect_games += 1;
+                }
+
+                let rarest_for_cache = result.rarest.as_ref().map(|r| (r.name.as_str(), r.percent));
+                cache.set(
+                    game.appid,
+                    game.rtime_last_played,
+                    result.achieved,
+                    result.total,
+                    rarest_for_cache,
+                );
+
+                if let Some(r) = result.rarest {
+                    rarest_candidates.push(r);
+                }
             }
         }
+
+        pb.finish_and_clear();
+        clear_status();
+        cache.save();
 
         // Sort by percent, then by game name, then by achievement name for deterministic results
         let rarest = rarest_candidates.into_iter().min_by(|a, b| {
@@ -437,19 +521,6 @@ impl SteamClient {
             .map(|g| GameStat {
                 name: g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
                 playtime_minutes: g.playtime_forever,
-            })
-            .collect()
-    }
-
-    fn get_all_games(&self, games: &super::models::OwnedGamesData) -> Vec<(u32, String)> {
-        games
-            .games
-            .iter()
-            .map(|g| {
-                (
-                    g.appid,
-                    g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
-                )
             })
             .collect()
     }
