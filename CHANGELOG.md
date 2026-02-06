@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-06
+
+### Features
+
+- feat: add achievement cache and progress bar (#19) ([cef0102](https://github.com/unhappychoice/steamfetch/commit/cef0102))
+
+### Bug Fixes
+
+- fix: make rarest achievement deterministic and fix shutdown delay (#18) ([aa7df10](https://github.com/unhappychoice/steamfetch/commit/aa7df10))
+
+### Other Changes
+
+- chore: bump version to v0.4.0 ([ce34588](https://github.com/unhappychoice/steamfetch/commit/ce34588))
+- docs: add screenshot image to README ([43955d7](https://github.com/unhappychoice/steamfetch/commit/43955d7))
+
+
 ## [0.3.1] - 2026-02-06
 
 ### Bug Fixes
@@ -13,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.3.1 ([e159919](https://github.com/unhappychoice/steamfetch/commit/e159919))
+- chore: bump version to v0.3.1 ([26752b2](https://github.com/unhappychoice/steamfetch/commit/26752b2))
 
 
 ## [0.3.0] - 2026-02-06
