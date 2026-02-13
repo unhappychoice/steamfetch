@@ -177,3 +177,56 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Publish to crates.io
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    needs: [release, build-and-upload]
+    steps:
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: unhappychoice/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION=${{ needs.release.outputs.new_version }}
+
+          MACOS_INTEL_URL="https://github.com/unhappychoice/steamfetch/releases/download/$VERSION/steamfetch-$VERSION-x86_64-apple-darwin.tar.gz"
+          MACOS_INTEL_SHA=$(curl -sL "$MACOS_INTEL_URL" | sha256sum | cut -d' ' -f1)
+
+          MACOS_ARM_URL="https://github.com/unhappychoice/steamfetch/releases/download/$VERSION/steamfetch-$VERSION-aarch64-apple-darwin.tar.gz"
+          MACOS_ARM_SHA=$(curl -sL "$MACOS_ARM_URL" | sha256sum | cut -d' ' -f1)
+
+          LINUX_INTEL_URL="https://github.com/unhappychoice/steamfetch/releases/download/$VERSION/steamfetch-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
+          LINUX_INTEL_SHA=$(curl -sL "$LINUX_INTEL_URL" | sha256sum | cut -d' ' -f1)
+
+          echo "Calculated SHAs:"
+          echo "macOS Intel: $MACOS_INTEL_SHA"
+          echo "macOS ARM: $MACOS_ARM_SHA"
+          echo "Linux Intel: $LINUX_INTEL_SHA"
+
+          cd homebrew-tap
+
+          # Update URLs
+          sed -i "s|https://github.com/unhappychoice/steamfetch/releases/download/v[0-9.]\+/steamfetch-v[0-9.]\+-x86_64-apple-darwin.tar.gz|$MACOS_INTEL_URL|g" Formula/steamfetch.rb
+          sed -i "s|https://github.com/unhappychoice/steamfetch/releases/download/v[0-9.]\+/steamfetch-v[0-9.]\+-aarch64-apple-darwin.tar.gz|$MACOS_ARM_URL|g" Formula/steamfetch.rb
+          sed -i "s|https://github.com/unhappychoice/steamfetch/releases/download/v[0-9.]\+/steamfetch-v[0-9.]\+-x86_64-unknown-linux-gnu.tar.gz|$LINUX_INTEL_URL|g" Formula/steamfetch.rb
+
+          # Update SHA values
+          FIRST_SHA_LINE=$(grep -n 'sha256 "' Formula/steamfetch.rb | head -1 | cut -d: -f1)
+          sed -i "${FIRST_SHA_LINE}s/sha256 \"[a-f0-9]\+\"/sha256 \"$MACOS_INTEL_SHA\"/" Formula/steamfetch.rb
+
+          SECOND_SHA_LINE=$(grep -n 'sha256 "' Formula/steamfetch.rb | head -2 | tail -1 | cut -d: -f1)
+          sed -i "${SECOND_SHA_LINE}s/sha256 \"[a-f0-9]\+\"/sha256 \"$MACOS_ARM_SHA\"/" Formula/steamfetch.rb
+
+          THIRD_SHA_LINE=$(grep -n 'sha256 "' Formula/steamfetch.rb | head -3 | tail -1 | cut -d: -f1)
+          sed -i "${THIRD_SHA_LINE}s/sha256 \"[a-f0-9]\+\"/sha256 \"$LINUX_INTEL_SHA\"/" Formula/steamfetch.rb
+
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Formula/steamfetch.rb
+          git commit -m "chore: update steamfetch to $VERSION"
+          git push
