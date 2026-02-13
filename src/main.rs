@@ -32,7 +32,7 @@ struct Cli {
     config_path: bool,
 
     /// Request timeout in seconds (default: 30)
-    #[arg(long, value_name = "SECONDS", default_value = "30")]
+    #[arg(long, value_name = "SECONDS", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
     timeout: u64,
 }
 

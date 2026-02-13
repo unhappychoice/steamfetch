@@ -491,7 +491,7 @@ impl SteamClient {
                 tokio::time::sleep(backoff).await;
             }
 
-            match self.client.get(url).send().await {
+            let api_error = match self.client.get(url).send().await {
                 Ok(response) => {
                     let status = response.status();
 
@@ -499,57 +499,34 @@ impl SteamClient {
                         eprintln!("[verbose] {} API status: {}", context, status);
                     }
 
-                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                        last_error = Some(SteamApiError::RateLimited);
-                        continue;
-                    }
+                    if status.is_success() {
+                        let body = response
+                            .text()
+                            .await
+                            .with_context(|| format!("Failed to read {} response body", context))?;
 
-                    if status == reqwest::StatusCode::FORBIDDEN {
-                        return Err(SteamApiError::InvalidApiKey.into());
-                    }
-
-                    if status.is_server_error() {
-                        let body = response.text().await.unwrap_or_default();
-                        last_error = Some(SteamApiError::ApiError {
-                            status: status.as_u16(),
-                            message: body,
-                        });
-                        continue;
-                    }
-
-                    let body = response
-                        .text()
-                        .await
-                        .with_context(|| format!("Failed to read {} response body", context))?;
-
-                    if self.verbose {
-                        eprintln!(
-                            "[verbose] {} response body: {}",
-                            context,
-                            &body[..body.len().min(500)]
-                        );
-                    }
-
-                    return Ok(body);
-                }
-                Err(e) => {
-                    let api_error = if e.is_timeout() {
-                        SteamApiError::Timeout
-                    } else {
-                        SteamApiError::NetworkError(e.to_string())
-                    };
-
-                    if api_error.is_retryable() {
                         if self.verbose {
-                            eprintln!("[verbose] {} request failed: {}", context, api_error);
+                            let truncated = &body[..body.floor_char_boundary(500)];
+                            eprintln!("[verbose] {} response body: {}", context, truncated);
                         }
-                        last_error = Some(api_error);
-                        continue;
+
+                        return Ok(body);
                     }
 
-                    return Err(api_error.into());
+                    classify_http_error(status, response).await
                 }
+                Err(e) if e.is_timeout() => SteamApiError::Timeout,
+                Err(e) => SteamApiError::NetworkError(e.to_string()),
+            };
+
+            if self.verbose {
+                eprintln!("[verbose] {} request failed: {}", context, api_error);
             }
+
+            if !api_error.is_retryable() {
+                return Err(api_error.into());
+            }
+            last_error = Some(api_error);
         }
 
         Err(last_error
@@ -564,7 +541,7 @@ fn build_http_client(timeout: Duration) -> Client {
         .pool_idle_timeout(Duration::from_secs(1))
         .pool_max_idle_per_host(0)
         .build()
-        .unwrap_or_else(|_| Client::new())
+        .expect("Failed to build HTTP client")
 }
 
 fn extract_top_games(games: &super::models::OwnedGamesData) -> Vec<GameStat> {
@@ -579,6 +556,23 @@ fn extract_top_games(games: &super::models::OwnedGamesData) -> Vec<GameStat> {
             playtime_minutes: g.playtime_forever,
         })
         .collect()
+}
+
+async fn classify_http_error(
+    status: reqwest::StatusCode,
+    response: reqwest::Response,
+) -> SteamApiError {
+    match status {
+        reqwest::StatusCode::TOO_MANY_REQUESTS => SteamApiError::RateLimited,
+        reqwest::StatusCode::FORBIDDEN => SteamApiError::InvalidApiKey,
+        _ => {
+            let body = response.text().await.unwrap_or_default();
+            SteamApiError::ApiError {
+                status: status.as_u16(),
+                message: body,
+            }
+        }
+    }
 }
 
 fn detect_api_error(body: &str, verbose: bool) -> Result<()> {
