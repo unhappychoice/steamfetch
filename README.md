@@ -158,6 +158,34 @@ Falls back to Steam Web API:
 - Returns games visible in your library
 - Some owned games may not appear in API response
 
+## FAQ
+
+### Game count is lower than expected
+
+The Steam Web API only returns games visible in your library. For a complete and accurate game count, run Steam client natively so steamfetch can use the Steamworks SDK to check ownership of all known Steam titles (~73,000+). A Steam API key is still required even when using the Native SDK.
+
+### "This Steam profile is private" error
+
+steamfetch requires your profile and game details to be public. Go to **Steam > Profile > Edit Profile > Privacy Settings** and set both "My profile" and "Game details" to **Public**.
+
+### Achievement fetching is slow
+
+steamfetch makes two API calls per game (player achievements + global percentages). For large libraries this can take a while on the first run. Results are cached at `~/.cache/steamfetch/achievements.json` and subsequent runs will be much faster. The cache invalidates per-game when you play a game again.
+
+### Image display shows garbled output or falls back to ASCII
+
+- Auto-detected protocol may not match your terminal. Try specifying it explicitly: `steamfetch --image --image-protocol sixel`
+- Supported protocols: **Sixel** (Windows Terminal, WezTerm, foot, mlterm, xterm), **Kitty**, **iTerm2**, **Block characters** (fallback)
+- Inside tmux/screen, terminal pixel size detection may fail. Try `--image-protocol block` as a workaround.
+
+### How to use Native SDK on WSL?
+
+Install and run Steam inside WSL with a GUI-enabled setup ([WSLg](https://github.com/microsoft/wslg)). Once Steam is running inside WSL, steamfetch will automatically detect it via the Native SDK. Note that Steam running on the Windows host side is not accessible from WSL.
+
+### How to debug issues?
+
+Run with `steamfetch --verbose` to see detailed output including: Steam client detection status, API request URLs, HTTP status codes, retry attempts, and failure reasons. You can also try `steamfetch --demo` to verify your terminal setup without needing an API key.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
