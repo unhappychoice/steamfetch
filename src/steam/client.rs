@@ -88,6 +88,7 @@ impl SteamClient {
             account_created: player.timecreated,
             steam_level,
             recently_played,
+            avatar_url: player.avatarfull,
         })
     }
 
@@ -147,6 +148,7 @@ impl SteamClient {
             account_created: player.timecreated,
             steam_level,
             recently_played,
+            avatar_url: player.avatarfull,
         })
     }
 

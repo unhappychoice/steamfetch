@@ -24,3 +24,7 @@ anyhow = "1"
 steamworks = { version = "0.12", features = ["raw-bindings"] }
 libloading = "0.8"
 indicatif = "0.17"
+image = "0.25"
+icy_sixel = "0.5"
+base64 = "0.22.1"
+libc = "0.2.182"

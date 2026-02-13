@@ -61,6 +61,7 @@ pub struct PlayerSummaryData {
 pub struct Player {
     pub personaname: String,
     pub timecreated: Option<u64>,
+    pub avatarfull: Option<String>,
 }
 
 // Achievements API
@@ -140,6 +141,7 @@ pub struct SteamStats {
     pub account_created: Option<u64>,
     pub steam_level: Option<u32>,
     pub recently_played: Vec<GameStat>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug)]

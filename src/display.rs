@@ -1,14 +1,76 @@
 use colored::Colorize;
+use std::io::{self, Write};
 
+use crate::image_display;
 use crate::steam::SteamStats;
+use crate::ImageProtocol;
 
-pub fn render(stats: &SteamStats) {
+const IMAGE_COLS: u32 = 34;
+const IMAGE_ROWS: u32 = 18;
+
+pub struct ImageConfig {
+    pub enabled: bool,
+    pub protocol: ImageProtocol,
+}
+
+pub async fn render(stats: &SteamStats, image_config: &ImageConfig) {
     let info_lines = build_info_lines(stats);
+
+    if image_config.enabled {
+        render_with_image(stats, &info_lines, image_config).await;
+    } else {
+        render_with_ascii(&info_lines);
+    }
+}
+
+async fn render_with_image(stats: &SteamStats, info_lines: &[String], config: &ImageConfig) {
+    let avatar = match &stats.avatar_url {
+        Some(url) => {
+            let cache_key = format!("avatar_{}.png", stats.username);
+            image_display::load_cached_or_download(url, &cache_key).await
+        }
+        None => None,
+    };
+
+    let Some(img) = avatar else {
+        return render_with_ascii(info_lines);
+    };
+
+    println!();
+
+    // Print image and rewind cursor to top-left of image area
+    let image_rows =
+        image_display::print_image_and_rewind(&img, &config.protocol, IMAGE_COLS, IMAGE_ROWS);
+
+    let Some(image_rows) = image_rows else {
+        return render_with_ascii(info_lines);
+    };
+
+    let col_offset = IMAGE_COLS + 3; // image width + gap
+    let mut stdout = io::stdout().lock();
+
+    // Print info lines to the right of the image
+    for (i, line) in info_lines.iter().enumerate() {
+        if i > 0 {
+            writeln!(stdout).unwrap();
+        }
+        image_display::cursor_right(col_offset);
+        write!(stdout, "{}", line).unwrap();
+    }
+
+    // Ensure we end up below the image area
+    let extra = (image_rows as usize).saturating_sub(info_lines.len());
+    for _ in 0..=extra {
+        writeln!(stdout).unwrap();
+    }
+    stdout.flush().unwrap();
+}
+
+fn render_with_ascii(info_lines: &[String]) {
     let logo_lines = build_logo();
 
     println!();
     for (i, logo_line) in logo_lines.iter().enumerate() {
-        // Offset info by 1 line to align vertically
         let info = if i == 0 {
             ""
         } else {
