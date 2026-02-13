@@ -30,6 +30,10 @@ struct Cli {
     /// Show config file path and exit
     #[arg(long)]
     config_path: bool,
+
+    /// Request timeout in seconds (default: 30)
+    #[arg(long, value_name = "SECONDS", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
+    timeout: u64,
 }
 
 #[tokio::main]
@@ -47,36 +51,33 @@ async fn main() -> Result<()> {
     let stats = if cli.demo {
         demo_stats()
     } else {
-        fetch_stats(cli.verbose, cli.config).await?
+        fetch_stats(&cli).await?
     };
 
     display::render(&stats);
     Ok(())
 }
 
-async fn fetch_stats(verbose: bool, config_path: Option<PathBuf>) -> Result<steam::SteamStats> {
-    // Try Steamworks SDK first, fallback to Web API
-    match NativeSteamClient::try_new(verbose) {
-        Some(native) => fetch_native_stats(native, verbose, config_path).await,
-        None => fetch_web_stats(verbose, config_path).await,
+async fn fetch_stats(cli: &Cli) -> Result<steam::SteamStats> {
+    match NativeSteamClient::try_new(cli.verbose) {
+        Some(native) => fetch_native_stats(native, cli).await,
+        None => fetch_web_stats(cli).await,
     }
 }
 
-async fn fetch_web_stats(verbose: bool, config_path: Option<PathBuf>) -> Result<steam::SteamStats> {
-    let config = Config::load(config_path)?;
-    let client = SteamClient::new(config.api_key, config.steam_id).with_verbose(verbose);
+async fn fetch_web_stats(cli: &Cli) -> Result<steam::SteamStats> {
+    let config = Config::load(cli.config.clone())?;
+    let client = SteamClient::new(config.api_key, config.steam_id)
+        .with_verbose(cli.verbose)
+        .with_timeout(cli.timeout);
     client.fetch_stats().await
 }
 
-async fn fetch_native_stats(
-    native: NativeSteamClient,
-    verbose: bool,
-    config_path: Option<PathBuf>,
-) -> Result<steam::SteamStats> {
+async fn fetch_native_stats(native: NativeSteamClient, cli: &Cli) -> Result<steam::SteamStats> {
     let username = native.username();
     let steam_id = native.steam_id().to_string();
 
-    if verbose {
+    if cli.verbose {
         eprintln!("[verbose] Native SDK username: {}", username);
         eprintln!("[verbose] Native SDK steam_id: {}", steam_id);
     }
@@ -84,16 +85,17 @@ async fn fetch_native_stats(
     let all_appids = steam::native::fetch_all_game_appids().await?;
     let owned_appids = native.get_owned_appids(&all_appids);
 
-    if verbose {
+    if cli.verbose {
         eprintln!(
             "[verbose] Found {} owned games via Native SDK",
             owned_appids.len()
         );
     }
 
-    // Load API key only (steam_id already obtained from Native SDK)
-    let api_key = Config::load_api_key_only(config_path)?;
-    let client = SteamClient::new(api_key, steam_id).with_verbose(verbose);
+    let api_key = Config::load_api_key_only(cli.config.clone())?;
+    let client = SteamClient::new(api_key, steam_id)
+        .with_verbose(cli.verbose)
+        .with_timeout(cli.timeout);
     client
         .fetch_stats_for_appids(&owned_appids, &username)
         .await

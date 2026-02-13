@@ -1,4 +1,5 @@
 mod client;
+pub mod error;
 mod models;
 pub mod native;
 

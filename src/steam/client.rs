@@ -4,6 +4,7 @@ use reqwest::Client;
 use std::io::{self, Write};
 use std::time::Duration;
 
+use super::error::SteamApiError;
 use super::models::{
     AchievementStats, AchievementsResponse, GameStat, GlobalAchievementsResponse,
     OwnedGamesResponse, PlayerSummaryResponse, RarestAchievement, SteamStats,
@@ -11,6 +12,9 @@ use super::models::{
 use crate::cache::AchievementCache;
 
 const BASE_URL: &str = "https://api.steampowered.com";
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const MAX_RETRIES: u32 = 3;
+const INITIAL_BACKOFF_MS: u64 = 500;
 
 fn print_status(msg: &str) {
     eprint!("\r\x1b[K{}", msg);
@@ -27,26 +31,31 @@ pub struct SteamClient {
     api_key: String,
     steam_id: String,
     verbose: bool,
+    timeout: Duration,
 }
 
 impl SteamClient {
     pub fn new(api_key: String, steam_id: String) -> Self {
-        let client = Client::builder()
-            .pool_idle_timeout(Duration::from_secs(1))
-            .pool_max_idle_per_host(0)
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+        let client = build_http_client(timeout);
 
         Self {
             client,
             api_key,
             steam_id,
             verbose: false,
+            timeout,
         }
     }
 
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
+        self
+    }
+
+    pub fn with_timeout(mut self, secs: u64) -> Self {
+        self.timeout = Duration::from_secs(secs);
+        self.client = build_http_client(self.timeout);
         self
     }
 
@@ -58,8 +67,7 @@ impl SteamClient {
         let games = self.fetch_owned_games().await?;
 
         print_status("Fetching account details...");
-        let steam_level = self.fetch_steam_level().await?;
-        let recently_played = self.fetch_recently_played().await?;
+        let (steam_level, recently_played) = self.fetch_optional_details().await;
 
         let unplayed = games
             .games
@@ -67,7 +75,7 @@ impl SteamClient {
             .filter(|g| g.playtime_forever == 0)
             .count() as u32;
         let total_playtime = games.games.iter().map(|g| g.playtime_forever).sum();
-        let top_games = self.extract_top_games(&games);
+        let top_games = extract_top_games(&games);
         let achievement_stats = self.fetch_achievement_stats(&games).await;
 
         Ok(SteamStats {
@@ -83,7 +91,6 @@ impl SteamClient {
         })
     }
 
-    /// Fetch stats for a specific list of AppIDs (used with Steamworks SDK)
     pub async fn fetch_stats_for_appids(
         &self,
         appids: &[u32],
@@ -96,10 +103,8 @@ impl SteamClient {
         let games = self.fetch_owned_games_for_appids(appids).await?;
 
         print_status("Fetching account details...");
-        let steam_level = self.fetch_steam_level().await?;
-        let recently_played = self.fetch_recently_played().await?;
+        let (steam_level, recently_played) = self.fetch_optional_details().await;
 
-        // Count unplayed from API response (only games with playtime data)
         let unplayed = games
             .games
             .iter()
@@ -107,9 +112,8 @@ impl SteamClient {
             .count() as u32;
 
         let total_playtime = games.games.iter().map(|g| g.playtime_forever).sum();
-        let top_games = self.extract_top_games(&games);
+        let top_games = extract_top_games(&games);
 
-        // Create OwnedGamesData for achievement scanning with native appid count
         let games_with_playtime: std::collections::HashMap<u32, _> =
             games.games.iter().map(|g| (g.appid, g)).collect();
 
@@ -146,6 +150,30 @@ impl SteamClient {
         })
     }
 
+    async fn fetch_optional_details(&self) -> (Option<u32>, Vec<GameStat>) {
+        let steam_level = match self.fetch_steam_level().await {
+            Ok(level) => level,
+            Err(e) => {
+                if self.verbose {
+                    eprintln!("[verbose] Failed to fetch steam level: {}", e);
+                }
+                None
+            }
+        };
+
+        let recently_played = match self.fetch_recently_played().await {
+            Ok(games) => games,
+            Err(e) => {
+                if self.verbose {
+                    eprintln!("[verbose] Failed to fetch recently played: {}", e);
+                }
+                Vec::new()
+            }
+        };
+
+        (steam_level, recently_played)
+    }
+
     async fn fetch_player(&self) -> Result<super::models::Player> {
         let url = format!(
             "{}/ISteamUser/GetPlayerSummaries/v2/?key={}&steamids={}",
@@ -157,26 +185,9 @@ impl SteamClient {
                 self.steam_id
             );
         }
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch player summary")?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
-
-        if self.verbose {
-            eprintln!("[verbose] API response status: {}", status);
-            eprintln!(
-                "[verbose] API response body: {}",
-                &body[..body.len().min(500)]
-            );
-        }
+        let body = self.request_with_retry(&url, "player summary").await?;
+        detect_api_error(&body, self.verbose)?;
 
         let parsed: PlayerSummaryResponse =
             serde_json::from_str(&body).context("Failed to parse player summary")?;
@@ -186,7 +197,7 @@ impl SteamClient {
             .players
             .into_iter()
             .next()
-            .context("Player not found")
+            .ok_or_else(|| SteamApiError::PlayerNotFound.into())
     }
 
     async fn fetch_owned_games(&self) -> Result<super::models::OwnedGamesData> {
@@ -229,26 +240,9 @@ impl SteamClient {
         if self.verbose {
             eprintln!("[verbose] Fetching owned games...");
         }
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch owned games")?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
-
-        if self.verbose {
-            eprintln!("[verbose] Owned games API status: {}", status);
-            eprintln!(
-                "[verbose] Owned games API body: {}",
-                &body[..body.len().min(500)]
-            );
-        }
+        let body = self.request_with_retry(&url, "owned games").await?;
+        detect_private_profile(&body)?;
 
         let parsed: OwnedGamesResponse =
             serde_json::from_str(&body).context("Failed to parse owned games")?;
@@ -264,22 +258,8 @@ impl SteamClient {
         if self.verbose {
             eprintln!("[verbose] Fetching steam level...");
         }
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch steam level")?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
-
-        if self.verbose {
-            eprintln!("[verbose] Steam level API status: {}", status);
-        }
+        let body = self.request_with_retry(&url, "steam level").await?;
 
         let parsed: super::models::SteamLevelResponse =
             serde_json::from_str(&body).context("Failed to parse steam level")?;
@@ -295,22 +275,8 @@ impl SteamClient {
         if self.verbose {
             eprintln!("[verbose] Fetching recently played...");
         }
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch recently played")?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed to read response body")?;
-
-        if self.verbose {
-            eprintln!("[verbose] Recently played API status: {}", status);
-        }
+        let body = self.request_with_retry(&url, "recently played").await?;
 
         let parsed: super::models::RecentlyPlayedResponse =
             serde_json::from_str(&body).context("Failed to parse recently played")?;
@@ -357,7 +323,6 @@ impl SteamClient {
                 .clone()
                 .unwrap_or_else(|| format!("App {}", game.appid));
 
-            // Check cache first
             if let Some(cached) = cache.get(game.appid, game.rtime_last_played) {
                 cached_count += 1;
                 total_achieved += cached.achieved;
@@ -380,7 +345,6 @@ impl SteamClient {
                 continue;
             }
 
-            // Fetch from API
             fetched_count += 1;
             pb.inc(1);
             pb.set_message(format!(
@@ -417,7 +381,6 @@ impl SteamClient {
         clear_status();
         cache.save();
 
-        // Sort by percent, then by game name, then by achievement name for deterministic results
         let rarest = rarest_candidates.into_iter().min_by(|a, b| {
             a.percent
                 .partial_cmp(&b.percent)
@@ -450,7 +413,6 @@ impl SteamClient {
         let achieved = achievements.iter().filter(|a| a.achieved == 1).count() as u32;
         let total = achievements.len() as u32;
 
-        // Find rarest achievement - try matching by apiname first, then by lowercase
         let rarest = achievements
             .iter()
             .filter(|a| a.achieved == 1)
@@ -511,18 +473,143 @@ impl SteamClient {
             .collect())
     }
 
-    fn extract_top_games(&self, games: &super::models::OwnedGamesData) -> Vec<GameStat> {
-        let mut sorted: Vec<_> = games.games.iter().collect();
-        sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
+    async fn request_with_retry(&self, url: &str, context: &str) -> Result<String> {
+        let mut last_error = None;
 
-        sorted
-            .into_iter()
-            .take(5)
-            .map(|g| GameStat {
-                name: g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
-                playtime_minutes: g.playtime_forever,
-            })
-            .collect()
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                let backoff = Duration::from_millis(INITIAL_BACKOFF_MS * 2u64.pow(attempt - 1));
+                if self.verbose {
+                    eprintln!(
+                        "[verbose] Retry {}/{} for {} (waiting {}ms)",
+                        attempt,
+                        MAX_RETRIES - 1,
+                        context,
+                        backoff.as_millis()
+                    );
+                }
+                tokio::time::sleep(backoff).await;
+            }
+
+            let api_error = match self.client.get(url).send().await {
+                Ok(response) => {
+                    let status = response.status();
+
+                    if self.verbose {
+                        eprintln!("[verbose] {} API status: {}", context, status);
+                    }
+
+                    if status.is_success() {
+                        let body = response
+                            .text()
+                            .await
+                            .with_context(|| format!("Failed to read {} response body", context))?;
+
+                        if self.verbose {
+                            let truncated = &body[..body.floor_char_boundary(500)];
+                            eprintln!("[verbose] {} response body: {}", context, truncated);
+                        }
+
+                        return Ok(body);
+                    }
+
+                    classify_http_error(status, response).await
+                }
+                Err(e) if e.is_timeout() => SteamApiError::Timeout,
+                Err(e) => SteamApiError::NetworkError(e.to_string()),
+            };
+
+            if self.verbose {
+                eprintln!("[verbose] {} request failed: {}", context, api_error);
+            }
+
+            if !api_error.is_retryable() {
+                return Err(api_error.into());
+            }
+            last_error = Some(api_error);
+        }
+
+        Err(last_error
+            .map(anyhow::Error::from)
+            .unwrap_or_else(|| anyhow::anyhow!("Failed to fetch {} after retries", context)))
+    }
+}
+
+fn build_http_client(timeout: Duration) -> Client {
+    Client::builder()
+        .timeout(timeout)
+        .pool_idle_timeout(Duration::from_secs(1))
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("Failed to build HTTP client")
+}
+
+fn extract_top_games(games: &super::models::OwnedGamesData) -> Vec<GameStat> {
+    let mut sorted: Vec<_> = games.games.iter().collect();
+    sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
+
+    sorted
+        .into_iter()
+        .take(5)
+        .map(|g| GameStat {
+            name: g.name.clone().unwrap_or_else(|| format!("App {}", g.appid)),
+            playtime_minutes: g.playtime_forever,
+        })
+        .collect()
+}
+
+async fn classify_http_error(
+    status: reqwest::StatusCode,
+    response: reqwest::Response,
+) -> SteamApiError {
+    match status {
+        reqwest::StatusCode::TOO_MANY_REQUESTS => SteamApiError::RateLimited,
+        reqwest::StatusCode::FORBIDDEN => SteamApiError::InvalidApiKey,
+        _ => {
+            let body = response.text().await.unwrap_or_default();
+            SteamApiError::ApiError {
+                status: status.as_u16(),
+                message: body,
+            }
+        }
+    }
+}
+
+fn detect_api_error(body: &str, verbose: bool) -> Result<()> {
+    if body.contains("\"players\":[]") || body.contains("\"players\": []") {
+        return Err(SteamApiError::PlayerNotFound.into());
+    }
+
+    if body.contains("Forbidden") || body.contains("Access is denied") {
+        if verbose {
+            eprintln!("[verbose] API key rejected by Steam");
+        }
+        return Err(SteamApiError::InvalidApiKey.into());
+    }
+
+    Ok(())
+}
+
+fn detect_private_profile(body: &str) -> Result<()> {
+    // Private profiles return an empty or minimal response for owned games
+    let parsed: Result<OwnedGamesResponse, _> = serde_json::from_str(body);
+    match parsed {
+        Ok(resp) if resp.response.games.is_empty() && resp.response.game_count == 0 => {
+            // Could be a private profile or truly no games.
+            // Check if the response body looks like a minimal/empty response
+            if !body.contains("\"games\"") {
+                return Err(SteamApiError::PrivateProfile.into());
+            }
+            Ok(())
+        }
+        Err(_) => {
+            // Parse failure on owned games often indicates private profile
+            if body.contains("\"game_count\":0") || !body.contains("\"games\"") {
+                return Err(SteamApiError::PrivateProfile.into());
+            }
+            Err(anyhow::anyhow!("Failed to parse owned games response"))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -530,4 +617,71 @@ struct GameAchievementResult {
     achieved: u32,
     total: u32,
     rarest: Option<RarestAchievement>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_api_error_empty_players() {
+        let body = r#"{"response":{"players":[]}}"#;
+        let result = detect_api_error(body, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_api_error_with_player() {
+        let body = r#"{"response":{"players":[{"personaname":"test"}]}}"#;
+        let result = detect_api_error(body, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_detect_private_profile_no_games_key() {
+        let body = r#"{"response":{"game_count":0}}"#;
+        let result = detect_private_profile(body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_private_profile_with_games() {
+        let body = r#"{"response":{"game_count":1,"games":[{"appid":220,"name":"Half-Life 2","playtime_forever":100}]}}"#;
+        let result = detect_private_profile(body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_extract_top_games_sorts_by_playtime() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 3,
+            games: vec![
+                super::super::models::Game {
+                    appid: 1,
+                    name: Some("A".to_string()),
+                    playtime_forever: 10,
+                    playtime_2weeks: 0,
+                    rtime_last_played: 0,
+                },
+                super::super::models::Game {
+                    appid: 2,
+                    name: Some("B".to_string()),
+                    playtime_forever: 100,
+                    playtime_2weeks: 0,
+                    rtime_last_played: 0,
+                },
+                super::super::models::Game {
+                    appid: 3,
+                    name: Some("C".to_string()),
+                    playtime_forever: 50,
+                    playtime_2weeks: 0,
+                    rtime_last_played: 0,
+                },
+            ],
+        };
+        let top = extract_top_games(&games);
+        assert_eq!(top[0].name, "B");
+        assert_eq!(top[1].name, "C");
+        assert_eq!(top[2].name, "A");
+    }
 }
