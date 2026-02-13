@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-02-13
+
+### Bug Fixes
+
+- fix: add rpath for Homebrew lib directory to resolve libsteam_api (#24) ([6e9a7a7](https://github.com/unhappychoice/steamfetch/commit/6e9a7a7))
+
+### Other Changes
+
+- chore: bump version to v0.5.2 ([2ad9b5d](https://github.com/unhappychoice/steamfetch/commit/2ad9b5d))
+
+
 ## [0.5.1] - 2026-02-13
 
 ### Features
@@ -13,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.5.1 ([184bfe2](https://github.com/unhappychoice/steamfetch/commit/184bfe2))
+- chore: bump version to v0.5.1 ([d279d8e](https://github.com/unhappychoice/steamfetch/commit/d279d8e))
 - docs: add OGP image with terminal preview and styled typography ([aad2877](https://github.com/unhappychoice/steamfetch/commit/aad2877))
 - docs: simplify Homebrew install command ([ae5fecc](https://github.com/unhappychoice/steamfetch/commit/ae5fecc))
 - docs: reorder installation methods with install script first ([8898c4f](https://github.com/unhappychoice/steamfetch/commit/8898c4f))
