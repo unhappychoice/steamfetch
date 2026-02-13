@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-13
+
+### Features
+
+- feat: display profile avatar image with terminal graphics protocols (#23) ([41ae1e2](https://github.com/unhappychoice/steamfetch/commit/41ae1e2))
+
+### Bug Fixes
+
+- fix: improve error handling for API failures (#22) ([f076a6b](https://github.com/unhappychoice/steamfetch/commit/f076a6b))
+
+### Other Changes
+
+- chore: bump version to v0.5.0 ([2fb2ca5](https://github.com/unhappychoice/steamfetch/commit/2fb2ca5))
+
+
 ## [0.4.0] - 2026-02-06
 
 ### Features
@@ -17,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.4.0 ([ce34588](https://github.com/unhappychoice/steamfetch/commit/ce34588))
+- chore: bump version to v0.4.0 ([5d3be01](https://github.com/unhappychoice/steamfetch/commit/5d3be01))
 - docs: add screenshot image to README ([43955d7](https://github.com/unhappychoice/steamfetch/commit/43955d7))
 
 
