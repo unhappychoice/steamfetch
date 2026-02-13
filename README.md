@@ -21,8 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/unhappychoice/steamfetch/main/insta
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew tap unhappychoice/tap
-brew install steamfetch
+brew install unhappychoice/tap/steamfetch
 ```
 
 ### From crates.io
