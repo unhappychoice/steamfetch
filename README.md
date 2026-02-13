@@ -82,8 +82,17 @@ export STEAM_ID="your_steam_id_here"
 # Display your Steam stats
 steamfetch
 
+# Show profile avatar image instead of ASCII logo
+steamfetch --image
+
+# Specify image protocol (auto, kitty, iterm, sixel)
+steamfetch --image --image-protocol sixel
+
 # Demo mode (no API key required)
 steamfetch --demo
+
+# Demo mode with image
+steamfetch --demo --image
 
 # Show config file path
 steamfetch --config-path
@@ -110,7 +119,22 @@ steamfetch --help
 - Recently played games (last 2 weeks)
 - Rarest achievement display
 - Beautiful SteamOS ASCII art with gradient colors
+- **Image display**: Show your Steam avatar with `--image` flag
 - Demo mode for testing without API setup
+
+### Image Display
+
+Use `--image` to show your Steam profile avatar instead of the ASCII logo.
+
+Supported protocols:
+- **Sixel** - Windows Terminal, WezTerm, foot, mlterm, xterm
+- **Kitty** - Kitty terminal
+- **iTerm2** - iTerm2
+- **Block characters** - Fallback for unsupported terminals
+
+Protocol is auto-detected by default. Use `--image-protocol` to override.
+
+Images are cached locally at `~/.cache/steamfetch/images/`.
 
 ## How It Works
 

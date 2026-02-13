@@ -1,14 +1,23 @@
 mod cache;
 mod config;
 mod display;
+mod image_display;
 mod steam;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
 use config::Config;
 use steam::{NativeSteamClient, SteamClient};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ImageProtocol {
+    Auto,
+    Kitty,
+    Iterm,
+    Sixel,
+}
 
 #[derive(Parser)]
 #[command(name = "steamfetch")]
@@ -34,6 +43,14 @@ struct Cli {
     /// Request timeout in seconds (default: 30)
     #[arg(long, value_name = "SECONDS", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
     timeout: u64,
+
+    /// Show profile avatar as image instead of ASCII logo
+    #[arg(long)]
+    image: bool,
+
+    /// Image display protocol (auto, kitty, iterm, sixel)
+    #[arg(long, value_enum, default_value = "auto")]
+    image_protocol: ImageProtocol,
 }
 
 #[tokio::main]
@@ -48,13 +65,18 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let image_config = display::ImageConfig {
+        enabled: cli.image,
+        protocol: cli.image_protocol,
+    };
+
     let stats = if cli.demo {
         demo_stats()
     } else {
         fetch_stats(&cli).await?
     };
 
-    display::render(&stats);
+    display::render(&stats, &image_config).await;
     Ok(())
 }
 
@@ -145,5 +167,6 @@ fn demo_stats() -> steam::SteamStats {
                 playtime_minutes: 480,
             },
         ],
+        avatar_url: None,
     }
 }
