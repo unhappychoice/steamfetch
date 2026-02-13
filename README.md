@@ -12,17 +12,17 @@ neofetch for Steam - Display your Steam stats in terminal with style.
 
 ## Installation
 
+### Install Script (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unhappychoice/steamfetch/main/install.sh | bash
+```
+
 ### Homebrew (macOS / Linux)
 
 ```bash
 brew tap unhappychoice/tap
 brew install steamfetch
-```
-
-### Install Script
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/unhappychoice/steamfetch/main/install.sh | bash
 ```
 
 ### From crates.io
