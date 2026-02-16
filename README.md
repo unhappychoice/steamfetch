@@ -24,12 +24,6 @@ curl -fsSL https://raw.githubusercontent.com/unhappychoice/steamfetch/main/insta
 brew install unhappychoice/tap/steamfetch
 ```
 
-### From crates.io
-
-```bash
-cargo install steamfetch
-```
-
 ### Download Binary
 
 Download the latest release from [GitHub Releases](https://github.com/unhappychoice/steamfetch/releases).
@@ -40,6 +34,7 @@ Download the latest release from [GitHub Releases](https://github.com/unhappycho
 git clone https://github.com/unhappychoice/steamfetch.git
 cd steamfetch
 cargo build --release
+# libsteam_api.so is automatically copied to target/release/
 ./target/release/steamfetch
 ```
 
@@ -181,6 +176,12 @@ steamfetch makes two API calls per game (player achievements + global percentage
 ### How to use Native SDK on WSL?
 
 Install and run Steam inside WSL with a GUI-enabled setup ([WSLg](https://github.com/microsoft/wslg)). Once Steam is running inside WSL, steamfetch will automatically detect it via the Native SDK. Note that Steam running on the Windows host side is not accessible from WSL.
+
+### "libsteam_api.so: cannot open shared object file" error
+
+The `steamfetch` binary requires `libsteam_api.so` (Linux) / `libsteam_api.dylib` (macOS) to be in the same directory as the binary. This is automatically handled by the install script, Homebrew, and GitHub Releases.
+
+If you built from source, `cargo build` copies the library to `target/release/` automatically. If the library is missing, copy it manually next to the binary from the build output.
 
 ### How to debug issues?
 
