@@ -115,6 +115,18 @@ main() {
         chmod +x "$INSTALL_DIR/$BINARY_NAME"
     fi
 
+    # Verify Steam API library was installed
+    if [[ "$PLATFORM" == *"linux"* ]] && [ ! -f "$INSTALL_DIR/libsteam_api.so" ]; then
+        echo "WARNING: libsteam_api.so was not found in the archive."
+        echo "steamfetch may fail with 'cannot open shared object file' error."
+        echo ""
+    fi
+    if [[ "$PLATFORM" == *"apple"* ]] && [ ! -f "$INSTALL_DIR/libsteam_api.dylib" ]; then
+        echo "WARNING: libsteam_api.dylib was not found in the archive."
+        echo "steamfetch may fail with a shared library error."
+        echo ""
+    fi
+
     echo "Successfully installed $BINARY_NAME to $INSTALL_DIR/"
     echo ""
     if [[ "$PLATFORM" == *"windows"* ]]; then
