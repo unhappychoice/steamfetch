@@ -24,6 +24,20 @@ curl -fsSL https://raw.githubusercontent.com/unhappychoice/steamfetch/main/insta
 brew install unhappychoice/tap/steamfetch
 ```
 
+### Nix
+
+Try it without installing via Nix
+
+```bash
+nix run github:unhappychoice/steamfetch
+```
+
+To pass arguments, add `--` to the end of the `nix run` invocation
+
+```bash
+nix run github:unhappychoice/steamfetch -- --demo # Everything after `--` is passed as an argument to steamfetch
+```
+
 ### Download Binary
 
 Download the latest release from [GitHub Releases](https://github.com/unhappychoice/steamfetch/releases).
