@@ -1,5 +1,5 @@
 {
-  description = "of-the-star's custom rust development flake";
+  description = "Steamfetch nix flake";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
@@ -35,7 +35,7 @@
             pkgs.rust-bin.selectLatestNightlyWith (
               toolchain:
               toolchain.default.override {
-                # extensions = [ "rust-src" ];
+                extensions = [ "rust-src" ];
               }
             );
 
