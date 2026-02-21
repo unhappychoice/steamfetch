@@ -91,7 +91,7 @@
 
         packages.default = crane-package;
 
-        formatter.${system} = nixpkgs.legacyPackages.${system}.nixfmt-tree;
+        formatter = pkgs.nixfmt-tree;
       }
     );
 }
