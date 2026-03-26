@@ -200,3 +200,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 ISC License - see [LICENSE](LICENSE) for details.
+
+## Author
+
+[@unhappychoice](https://unhappychoice.com)
