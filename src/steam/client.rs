@@ -548,7 +548,7 @@ fn build_http_client(timeout: Duration) -> Client {
 
 fn extract_top_games(games: &super::models::OwnedGamesData) -> Vec<GameStat> {
     let mut sorted: Vec<_> = games.games.iter().collect();
-    sorted.sort_by(|a, b| b.playtime_forever.cmp(&a.playtime_forever));
+    sorted.sort_by_key(|g| std::cmp::Reverse(g.playtime_forever));
 
     sorted
         .into_iter()

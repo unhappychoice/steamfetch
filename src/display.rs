@@ -231,7 +231,11 @@ fn build_info_lines(stats: &SteamStats, inner_width: usize) -> Vec<String> {
             .iter()
             .map(|g| format_playtime(g.playtime_minutes))
             .collect();
-        lines.extend(tree_lines(&stats.recently_played, &recent_times, inner_width));
+        lines.extend(tree_lines(
+            &stats.recently_played,
+            &recent_times,
+            inner_width,
+        ));
     }
 
     if let Some(ref achievements) = stats.achievement_stats {
@@ -266,7 +270,11 @@ fn tree_lines(items: &[GameStat], times: &[String], inner_width: usize) -> Vec<S
         .zip(times.iter())
         .enumerate()
         .map(|(i, (game, time))| {
-            let prefix = if i == items.len() - 1 { "└─" } else { "├─" };
+            let prefix = if i == items.len() - 1 {
+                "└─"
+            } else {
+                "├─"
+            };
             format!("{} {} {}", prefix, truncate(&game.name, name_width), time)
         })
         .collect()
