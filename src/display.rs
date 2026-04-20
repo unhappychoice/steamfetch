@@ -1,12 +1,16 @@
 use colored::Colorize;
 use std::io::{self, Write};
+use terminal_size::{terminal_size, Width};
 
 use crate::image_display;
-use crate::steam::SteamStats;
+use crate::steam::{GameStat, SteamStats};
 use crate::ImageProtocol;
 
 const IMAGE_COLS: u32 = 34;
 const IMAGE_ROWS: u32 = 18;
+const LEFT_OFFSET: usize = IMAGE_COLS as usize + 3; // image/logo width + gap
+const DEFAULT_TERMINAL_WIDTH: u16 = 120;
+const MIN_NAME_WIDTH: usize = 8;
 
 pub struct ImageConfig {
     pub enabled: bool,
@@ -14,13 +18,20 @@ pub struct ImageConfig {
 }
 
 pub async fn render(stats: &SteamStats, image_config: &ImageConfig) {
-    let info_lines = build_info_lines(stats);
+    let info_lines = build_info_lines(stats, inner_width());
 
     if image_config.enabled {
         render_with_image(stats, &info_lines, image_config).await;
     } else {
         render_with_ascii(&info_lines);
     }
+}
+
+fn inner_width() -> usize {
+    let total = terminal_size()
+        .map(|(Width(w), _)| w)
+        .unwrap_or(DEFAULT_TERMINAL_WIDTH) as usize;
+    total.saturating_sub(LEFT_OFFSET)
 }
 
 async fn render_with_image(stats: &SteamStats, info_lines: &[String], config: &ImageConfig) {
@@ -118,7 +129,7 @@ fn logo_width() -> usize {
     35
 }
 
-fn build_info_lines(stats: &SteamStats) -> Vec<String> {
+fn build_info_lines(stats: &SteamStats, inner_width: usize) -> Vec<String> {
     // 13 (label) + 1 (space) + 14 (value) + 2 (space) + ~20 (title) = 50
     let line_width = 50;
     let mut lines = vec![
@@ -205,61 +216,90 @@ fn build_info_lines(stats: &SteamStats) -> Vec<String> {
 
     lines.push(String::new());
     lines.push(format!("{}", "Top Played".bold()));
-
-    for (i, game) in stats.top_games.iter().enumerate() {
-        let prefix = if i == stats.top_games.len() - 1 {
-            "└─"
-        } else {
-            "├─"
-        };
-        let name = truncate(&game.name, 20);
-        lines.push(format!(
-            "{} {} {}h",
-            prefix,
-            name,
-            format_number(game.playtime_hours())
-        ));
-    }
+    let top_times: Vec<String> = stats
+        .top_games
+        .iter()
+        .map(|g| format!("{}h", format_number(g.playtime_hours())))
+        .collect();
+    lines.extend(tree_lines(&stats.top_games, &top_times, inner_width));
 
     if !stats.recently_played.is_empty() {
         lines.push(String::new());
         lines.push(format!("{}", "Recently Played (2 weeks)".bold()));
-
-        for (i, game) in stats.recently_played.iter().enumerate() {
-            let prefix = if i == stats.recently_played.len() - 1 {
-                "└─"
-            } else {
-                "├─"
-            };
-            let name = truncate(&game.name, 20);
-            let hours = game.playtime_minutes / 60;
-            let mins = game.playtime_minutes % 60;
-            let time = if hours > 0 {
-                format!("{}h {}m", hours, mins)
-            } else {
-                format!("{}m", mins)
-            };
-            lines.push(format!("{} {} {}", prefix, name, time));
-        }
+        let recent_times: Vec<String> = stats
+            .recently_played
+            .iter()
+            .map(|g| format_playtime(g.playtime_minutes))
+            .collect();
+        lines.extend(tree_lines(
+            &stats.recently_played,
+            &recent_times,
+            inner_width,
+        ));
     }
 
     if let Some(ref achievements) = stats.achievement_stats {
         if let Some(ref rarest) = achievements.rarest {
+            let percent_len = format!("{:.1}", rarest.percent).len();
+            let name_max = inner_width
+                .saturating_sub(percent_len + 14)
+                .max(MIN_NAME_WIDTH);
+            let game_max = inner_width.saturating_sub(5).max(MIN_NAME_WIDTH);
+
             lines.push(String::new());
             lines.push(format!(
                 "{}: \"{}\" ({:.1}%)",
                 "Rarest".bold().yellow(),
-                truncate(&rarest.name, 25).trim(),
+                truncate(&rarest.name, name_max).trim(),
                 rarest.percent
             ));
             lines.push(format!(
                 "  in {}",
-                truncate(&rarest.game, 30).trim().dimmed()
+                truncate(&rarest.game, game_max).trim().dimmed()
             ));
         }
     }
 
     lines
+}
+
+fn tree_lines(items: &[GameStat], times: &[String], inner_width: usize) -> Vec<String> {
+    let name_width = tree_name_width(items, times, inner_width);
+    items
+        .iter()
+        .zip(times.iter())
+        .enumerate()
+        .map(|(i, (game, time))| {
+            let prefix = if i == items.len() - 1 {
+                "└─"
+            } else {
+                "├─"
+            };
+            format!("{} {} {}", prefix, truncate(&game.name, name_width), time)
+        })
+        .collect()
+}
+
+fn tree_name_width(items: &[GameStat], times: &[String], inner_width: usize) -> usize {
+    let max_time = times.iter().map(|t| t.chars().count()).max().unwrap_or(0);
+    let max_name = items
+        .iter()
+        .map(|g| g.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    // prefix(2) + space(1) + name + space(1) + time
+    let available = inner_width.saturating_sub(4 + max_time);
+    available.min(max_name).max(MIN_NAME_WIDTH)
+}
+
+fn format_playtime(minutes: u32) -> String {
+    let hours = minutes / 60;
+    let mins = minutes % 60;
+    if hours > 0 {
+        format!("{}h {}m", hours, mins)
+    } else {
+        format!("{}m", mins)
+    }
 }
 
 fn games_title(count: u32) -> (&'static str, (u8, u8, u8)) {
