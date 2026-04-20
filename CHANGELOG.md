@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-04-20
+
+### Bug Fixes
+
+- fix: skip redundant steam api lib copy in release workflow ([bc577a4](https://github.com/unhappychoice/steamfetch/commit/bc577a4))
+
+### Other Changes
+
+- chore: bump version to v0.5.4 ([2eb28dd](https://github.com/unhappychoice/steamfetch/commit/2eb28dd))
+
+
 ## [0.5.3] - 2026-04-20
 
 ### Features
@@ -23,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.5.3 ([dd6b4f9](https://github.com/unhappychoice/steamfetch/commit/dd6b4f9))
+- chore: bump version to v0.5.3 ([a72abcc](https://github.com/unhappychoice/steamfetch/commit/a72abcc))
 - docs: add author section with website link ([b070134](https://github.com/unhappychoice/steamfetch/commit/b070134))
 - docs: add FAQ section covering common issues ([7c6f62b](https://github.com/unhappychoice/steamfetch/commit/7c6f62b))
 
