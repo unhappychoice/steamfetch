@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-04-20
+
+### Features
+
+- feat: adapt game name truncation to terminal width ([6576316](https://github.com/unhappychoice/steamfetch/commit/6576316))
+- feat: Added nix support ([c351ada](https://github.com/unhappychoice/steamfetch/commit/c351ada))
+
+### Bug Fixes
+
+- fix: satisfy rustfmt and clippy on newer toolchain ([34f2910](https://github.com/unhappychoice/steamfetch/commit/34f2910))
+- fix: Made crane follow our nixpkgs instance ([196e8db](https://github.com/unhappychoice/steamfetch/commit/196e8db))
+- fix: Cleaned up formatter declaration ([3db35c7](https://github.com/unhappychoice/steamfetch/commit/3db35c7))
+- fix: Revised flake ([4f10692](https://github.com/unhappychoice/steamfetch/commit/4f10692))
+- fix: copy libsteam_api to build output and improve installation docs (#27) ([3d7b294](https://github.com/unhappychoice/steamfetch/commit/3d7b294))
+- fix: remove WSL special handling to install Linux binary in WSL ([775a398](https://github.com/unhappychoice/steamfetch/commit/775a398))
+
+### Other Changes
+
+- chore: bump version to v0.5.3 ([dd6b4f9](https://github.com/unhappychoice/steamfetch/commit/dd6b4f9))
+- docs: add author section with website link ([b070134](https://github.com/unhappychoice/steamfetch/commit/b070134))
+- docs: add FAQ section covering common issues ([7c6f62b](https://github.com/unhappychoice/steamfetch/commit/7c6f62b))
+
+
 ## [0.5.2] - 2026-02-13
 
 ### Bug Fixes
@@ -13,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.5.2 ([2ad9b5d](https://github.com/unhappychoice/steamfetch/commit/2ad9b5d))
+- chore: bump version to v0.5.2 ([010c8cd](https://github.com/unhappychoice/steamfetch/commit/010c8cd))
 
 
 ## [0.5.1] - 2026-02-13
