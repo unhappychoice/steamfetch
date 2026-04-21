@@ -527,20 +527,18 @@ fn render_remaining_info(lines: &[String], width: usize) {
 fn truncate(s: &str, max_len: usize) -> String {
     let text_width = s.width();
     if text_width <= max_len {
-        let padding = " ".repeat(max_len - text_width);
-        format!("{s}{padding}")
-    } else {
-        let mut text_width = text_width;
-        let mut chars: Vec<char> = s.chars().collect();
-        while text_width > max_len - 3 && !chars.is_empty() {
-            let c = chars.last().unwrap();
-            text_width -= c.width().unwrap_or(0).max(1);
-            chars.pop();
-        }
-        let truncated: String = chars.iter().collect();
-        let padding = " ".repeat(max_len - text_width);
-        format!("{truncated}...{padding}")
+        return format!("{s}{}", " ".repeat(max_len - text_width));
     }
+    let target = max_len.saturating_sub(3);
+    let mut width = text_width;
+    let mut chars: Vec<char> = s.chars().collect();
+    while width > target {
+        let Some(c) = chars.pop() else { break };
+        width -= c.width().unwrap_or(0).max(1);
+    }
+    let truncated: String = chars.iter().collect();
+    let padding = " ".repeat(max_len.saturating_sub(width + 3));
+    format!("{truncated}...{padding}")
 }
 
 fn format_number(n: u32) -> String {
