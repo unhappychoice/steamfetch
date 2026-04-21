@@ -2119,6 +2119,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

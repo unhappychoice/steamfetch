@@ -1,6 +1,7 @@
 use colored::Colorize;
 use std::io::{self, Write};
 use terminal_size::{terminal_size, Width};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::image_display;
 use crate::steam::{GameStat, SteamStats};
@@ -281,12 +282,8 @@ fn tree_lines(items: &[GameStat], times: &[String], inner_width: usize) -> Vec<S
 }
 
 fn tree_name_width(items: &[GameStat], times: &[String], inner_width: usize) -> usize {
-    let max_time = times.iter().map(|t| t.chars().count()).max().unwrap_or(0);
-    let max_name = items
-        .iter()
-        .map(|g| g.name.chars().count())
-        .max()
-        .unwrap_or(0);
+    let max_time = times.iter().map(|t| t.width()).max().unwrap_or(0);
+    let max_name = items.iter().map(|g| g.name.width()).max().unwrap_or(0);
     // prefix(2) + space(1) + name + space(1) + time
     let available = inner_width.saturating_sub(4 + max_time);
     available.min(max_name).max(MIN_NAME_WIDTH)
@@ -528,13 +525,20 @@ fn render_remaining_info(lines: &[String], width: usize) {
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max_len {
-        format!("{:<width$}", s, width = max_len)
-    } else {
-        let truncated: String = chars[..max_len - 3].iter().collect();
-        format!("{}...", truncated)
+    let text_width = s.width();
+    if text_width <= max_len {
+        return format!("{s}{}", " ".repeat(max_len - text_width));
     }
+    let target = max_len.saturating_sub(3);
+    let mut width = text_width;
+    let mut chars: Vec<char> = s.chars().collect();
+    while width > target {
+        let Some(c) = chars.pop() else { break };
+        width -= c.width().unwrap_or(0).max(1);
+    }
+    let truncated: String = chars.iter().collect();
+    let padding = " ".repeat(max_len.saturating_sub(width + 3));
+    format!("{truncated}...{padding}")
 }
 
 fn format_number(n: u32) -> String {
