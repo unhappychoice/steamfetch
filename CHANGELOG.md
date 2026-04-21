@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-04-21
+
+### Features
+
+- feat: improve string width handling with unicode-width ([bf42b97](https://github.com/unhappychoice/steamfetch/commit/bf42b97))
+
+### Bug Fixes
+
+- fix: pad truncated string to exact max_len width ([dfbddfc](https://github.com/unhappychoice/steamfetch/commit/dfbddfc))
+
+### Other Changes
+
+- chore: bump version to v0.5.5 ([9caed2c](https://github.com/unhappychoice/steamfetch/commit/9caed2c))
+
+
 ## [0.5.4] - 2026-04-20
 
 ### Bug Fixes
@@ -13,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
-- chore: bump version to v0.5.4 ([2eb28dd](https://github.com/unhappychoice/steamfetch/commit/2eb28dd))
+- chore: bump version to v0.5.4 ([db4f645](https://github.com/unhappychoice/steamfetch/commit/db4f645))
 
 
 ## [0.5.3] - 2026-04-20
