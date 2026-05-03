@@ -304,4 +304,43 @@ mod tests {
             Some(std::path::Path::new("/tmp/cfg.toml"))
         );
     }
+
+    #[tokio::test]
+    async fn test_fetch_web_stats_propagates_config_load_error() {
+        // Invalid TOML in the supplied config path makes `Config::load` return
+        // Err, which `fetch_web_stats` propagates via `?` before constructing
+        // the SteamClient or making any HTTP request. Exercises the function
+        // entry, the `Config::load(...)?` line, and the early-return path.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "steamfetch-fetch-web-stats-test-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, "this is = not [valid toml").unwrap();
+
+        let cli = Cli {
+            demo: false,
+            verbose: false,
+            config: Some(path.clone()),
+            config_path: false,
+            timeout: 30,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = fetch_web_stats(&cli)
+            .await
+            .expect_err("invalid TOML should make Config::load propagate an error");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected parse-failure context, got: {msg}",
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
