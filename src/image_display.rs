@@ -693,6 +693,30 @@ mod tests {
                 ResolvedProtocol::Block
             ));
         }
+
+        #[test]
+        fn test_print_image_and_rewind_auto_block_returns_block_rows() {
+            use image::{DynamicImage, ImageBuffer, Rgba};
+
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+
+            // Build a 2x2 image; with cols=4 the scale is 2, scaled_h is 4,
+            // so print_block returns ceil(4/2) = 2 terminal rows.
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
+            for y in 0..2 {
+                for x in 0..2 {
+                    buf.put_pixel(x, y, Rgba([10, 20, 30, 255]));
+                }
+            }
+            let img = DynamicImage::ImageRgba8(buf);
+
+            // `rows` arg is intentionally different from the block-rendered
+            // height; the Block branch returns the height computed by
+            // print_block, not the caller-provided `rows`.
+            let result = print_image_and_rewind(&img, &ImageProtocol::Auto, 4, 99);
+            assert_eq!(result, Some(2));
+        }
     }
 
     #[cfg(target_os = "linux")]
