@@ -516,5 +516,67 @@ mod tests {
 
             let _ = fs::remove_dir_all(&root);
         }
+
+        #[test]
+        fn test_try_new_returns_none_when_no_steam_client_found() {
+            // Empty $HOME → no candidate path exists → matches the `None`
+            // arm of `match get_steam_client_path()` and returns None.
+            // Exercises the early-return branch with verbose=false (no log).
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("none-no-verbose");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_no_steam_client_found_verbose() {
+            // Same early-return path with verbose=true so the
+            // "[verbose] Steam client not found" eprintln branch runs.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("none-verbose");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_steam_client_fails_to_load() {
+            // A stub file at the sdk64 path satisfies `get_steam_client_path`,
+            // but `Library::new` fails to dlopen non-ELF bytes — the function
+            // hits the `Err(e) => return None` arm of the load match.
+            // verbose=false skips the eprintln branch.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("load-fail");
+            let _scope = HomeScope::set(&root);
+            let stub = root.join(".steam/sdk64/steamclient.so");
+            touch(&stub);
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_steam_client_fails_to_load_verbose() {
+            // Same load-failure path, verbose=true so both verbose branches
+            // ("Found Steam client at" and "Failed to load Steam client")
+            // execute.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("load-fail-verbose");
+            let _scope = HomeScope::set(&root);
+            let stub = root.join(".steam/sdk64/steamclient.so");
+            touch(&stub);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
     }
 }
