@@ -1265,6 +1265,41 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
         }
 
+        #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            // Sibling tests in this submodule run with XDG_CACHE_HOME unset,
+            // so EnvScope::Drop's `None => env::remove_var(...)` arm dominates
+            // and the `Some(v) => env::set_var(...)` arm on line 1197 stays
+            // uncovered. Pre-set the variable before constructing an EnvScope
+            // so prev = Some(v), forcing Drop to take the restore branch.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            // Drop ran the `Some(v) => env::set_var(...)` arm, restoring the
+            // sentinel value rather than removing the variable.
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+
         // Same as above, but with many info lines so the
         // `extra = image_rows.saturating_sub(info_lines.len())` branch
         // takes the saturating-to-zero path.
