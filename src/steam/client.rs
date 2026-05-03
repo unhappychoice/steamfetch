@@ -1120,4 +1120,35 @@ mod tests {
             drop(listener);
         }
     }
+
+    mod fetch_achievement_stats_tests {
+        use super::super::*;
+
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(f)
+        }
+
+        #[test]
+        fn test_fetch_achievement_stats_returns_none_for_empty_games() {
+            // Empty input → the per-game `for` loop is skipped, so no HTTP
+            // requests are dispatched and the function reaches the
+            // `(total_possible > 0).then_some(...)` tail with
+            // `total_possible == 0`, returning None.
+            //
+            // Robust against XDG_CACHE_HOME races with sibling test
+            // submodules: the assertion is None regardless of which
+            // directory `AchievementCache::load`/`save` happens to touch.
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 0,
+                games: vec![],
+            };
+            let client = SteamClient::new("k".into(), "id".into());
+            let result = run_async(client.fetch_achievement_stats(&games));
+            assert!(result.is_none());
+        }
+    }
 }
