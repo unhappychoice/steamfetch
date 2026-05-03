@@ -3,6 +3,8 @@ mod config;
 mod display;
 mod image_display;
 mod steam;
+#[cfg(test)]
+mod test_support;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};

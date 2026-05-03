@@ -402,14 +402,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod steam_client_path_tests {
         use super::super::*;
+        use crate::test_support::lock_env;
         use std::env;
         use std::fs;
         use std::path::{Path, PathBuf};
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // $HOME mutation is process-global; serialize across tests in this submodule.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         struct HomeScope {
             prev: Option<String>,
@@ -458,14 +455,14 @@ mod tests {
 
         #[test]
         fn test_get_steam_client_path_returns_none_when_home_unset() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = HomeScope::unset();
             assert!(get_steam_client_path().is_none());
         }
 
         #[test]
         fn test_get_steam_client_path_returns_none_when_no_files_exist() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("none");
             fs::create_dir_all(&root).unwrap();
             let _scope = HomeScope::set(&root);
@@ -475,7 +472,7 @@ mod tests {
 
         #[test]
         fn test_get_steam_client_path_prefers_sdk64() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("sdk64");
             let _scope = HomeScope::set(&root);
             let sdk = root.join(".steam/sdk64/steamclient.so");
@@ -491,7 +488,7 @@ mod tests {
 
         #[test]
         fn test_get_steam_client_path_falls_back_to_steam_linux64() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("middle");
             let _scope = HomeScope::set(&root);
             let middle = root.join(".steam/steam/linux64/steamclient.so");
@@ -505,7 +502,7 @@ mod tests {
 
         #[test]
         fn test_get_steam_client_path_falls_back_to_local_share() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("local");
             let _scope = HomeScope::set(&root);
             let local = root.join(".local/share/Steam/linux64/steamclient.so");
@@ -522,7 +519,7 @@ mod tests {
             // Empty $HOME → no candidate path exists → matches the `None`
             // arm of `match get_steam_client_path()` and returns None.
             // Exercises the early-return branch with verbose=false (no log).
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("none-no-verbose");
             fs::create_dir_all(&root).unwrap();
             let _scope = HomeScope::set(&root);
@@ -536,7 +533,7 @@ mod tests {
         fn test_try_new_returns_none_when_no_steam_client_found_verbose() {
             // Same early-return path with verbose=true so the
             // "[verbose] Steam client not found" eprintln branch runs.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("none-verbose");
             fs::create_dir_all(&root).unwrap();
             let _scope = HomeScope::set(&root);
@@ -552,7 +549,7 @@ mod tests {
             // but `Library::new` fails to dlopen non-ELF bytes — the function
             // hits the `Err(e) => return None` arm of the load match.
             // verbose=false skips the eprintln branch.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("load-fail");
             let _scope = HomeScope::set(&root);
             let stub = root.join(".steam/sdk64/steamclient.so");
@@ -568,7 +565,7 @@ mod tests {
             // Same load-failure path, verbose=true so both verbose branches
             // ("Found Steam client at" and "Failed to load Steam client")
             // execute.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_root("load-fail-verbose");
             let _scope = HomeScope::set(&root);
             let stub = root.join(".steam/sdk64/steamclient.so");
@@ -610,7 +607,7 @@ mod tests {
             // (lines ~152–158), a path the existing load-failure tests can't
             // reach because their stub bytes never get past `Library::new`.
             // verbose=false skips the eprintln.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
 
             // Skip when no candidate system library is available — this
             // platform isn't suitable for this test, treat it as a no-op
@@ -637,7 +634,7 @@ mod tests {
             // both the "Found Steam client at" log and the "Failed to get
             // CreateInterface" verbose log inside the symbol-lookup error
             // arm.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
 
             let Some(real_lib) = find_loadable_system_lib() else {
                 return;
@@ -661,7 +658,7 @@ mod tests {
             // HomeScope::Drop's `Some(v)` arm is the only one ever hit. Force
             // $HOME to be unset before HomeScope::set so prev = None,
             // exercising the `None => env::remove_var("HOME")` branch on Drop.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer_prev = env::var("HOME").ok();
             env::remove_var("HOME");
 

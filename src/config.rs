@@ -361,14 +361,10 @@ show_top_games = 7
 
     mod env_tests {
         use super::super::*;
+        use crate::test_support::lock_env;
         use std::env;
         use std::fs;
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // STEAM_API_KEY and STEAM_ID are process-wide; serialize mutations
-        // across this submodule so parallel test threads don't race.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         fn unique_path(label: &str) -> std::path::PathBuf {
             let nanos = SystemTime::now()
@@ -413,7 +409,7 @@ show_top_games = 7
 
         #[test]
         fn test_load_prefers_env_vars_over_config_file() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::set("STEAM_API_KEY", "env-key");
             let _sid = EnvScope::set("STEAM_ID", "env-sid");
 
@@ -437,7 +433,7 @@ steam_id = "file-sid"
 
         #[test]
         fn test_load_falls_back_to_config_file_when_env_unset() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::save("STEAM_API_KEY");
             let _sid = EnvScope::save("STEAM_ID");
 
@@ -461,7 +457,7 @@ steam_id = "file-sid"
 
         #[test]
         fn test_load_errors_with_help_when_api_key_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::save("STEAM_API_KEY");
             let _sid = EnvScope::set("STEAM_ID", "env-sid");
 
@@ -483,7 +479,7 @@ steam_id = "file-sid"
 
         #[test]
         fn test_load_errors_with_help_when_steam_id_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::set("STEAM_API_KEY", "env-key");
             let _sid = EnvScope::save("STEAM_ID");
 
@@ -505,7 +501,7 @@ steam_id = "file-sid"
 
         #[test]
         fn test_load_api_key_only_prefers_env() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::set("STEAM_API_KEY", "env-key");
 
             let path = unique_path("api-env");
@@ -526,7 +522,7 @@ steam_api_key = "file-key"
 
         #[test]
         fn test_load_api_key_only_falls_back_to_file() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::save("STEAM_API_KEY");
 
             let path = unique_path("api-file");
@@ -547,7 +543,7 @@ steam_api_key = "file-key"
 
         #[test]
         fn test_load_api_key_only_errors_when_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::save("STEAM_API_KEY");
 
             let path = unique_path("api-missing");
@@ -569,7 +565,7 @@ steam_api_key = "file-key"
         fn test_load_propagates_load_config_file_error() {
             // Invalid TOML in the config file makes `load_config_file` return
             // Err, which `Config::load` propagates via `?` (line 94).
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::set("STEAM_API_KEY", "env-key");
             let _sid = EnvScope::set("STEAM_ID", "env-sid");
 
@@ -592,7 +588,7 @@ steam_api_key = "file-key"
         #[test]
         fn test_load_api_key_only_propagates_load_config_file_error() {
             // Same `?` propagation in `load_api_key_only` (line 116).
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _api = EnvScope::set("STEAM_API_KEY", "env-key");
 
             let path = unique_path("api-bad-toml");
@@ -616,7 +612,7 @@ steam_api_key = "file-key"
             // unset, so EnvScope::Drop's `None` arm is the only one ever hit.
             // Pre-seed the var so prev is Some, exercising the `Some(v)` arm
             // that restores the prior value on Drop.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer_prev = env::var("STEAM_API_KEY").ok();
 
             let sentinel = "preexisting-sentinel-value";

@@ -203,13 +203,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod fs_tests {
         use super::super::*;
+        use crate::test_support::lock_env;
         use std::env;
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // Serialize XDG_CACHE_HOME mutations across this submodule's tests
-        // so they don't race against each other.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         fn unique_cache_root(label: &str) -> std::path::PathBuf {
             let nanos = SystemTime::now()
@@ -247,7 +243,7 @@ mod tests {
 
         #[test]
         fn test_cache_path_uses_xdg_cache_home() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("xdg");
             let _scope = EnvScope::set(&root);
 
@@ -258,7 +254,7 @@ mod tests {
 
         #[test]
         fn test_load_returns_default_when_cache_file_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("missing");
             let _scope = EnvScope::set(&root);
             assert!(!root.exists());
@@ -271,7 +267,7 @@ mod tests {
 
         #[test]
         fn test_load_returns_default_when_cache_file_corrupt() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("corrupt");
             let _scope = EnvScope::set(&root);
 
@@ -291,7 +287,7 @@ mod tests {
             // only ever runs its `None => env::remove_var(...)` arm. Pre-set
             // the variable before constructing an EnvScope so prev = Some(v),
             // forcing the `Some(v) => env::set_var(...)` arm on Drop.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
 
             let sentinel_root = unique_cache_root("envscope-restore-sentinel");
@@ -321,7 +317,7 @@ mod tests {
 
         #[test]
         fn test_save_then_load_roundtrip_persists_entries() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("rt");
             let _scope = EnvScope::set(&root);
 

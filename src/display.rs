@@ -1169,15 +1169,12 @@ mod tests {
     mod render_with_image_cache_tests {
         use super::super::*;
         use super::make_minimal_stats;
+        use crate::test_support::lock_env;
         use image::{DynamicImage, ImageBuffer, Rgba};
         use std::env;
         use std::io::Cursor;
         use std::path::{Path, PathBuf};
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // Serialize XDG_CACHE_HOME mutations across this submodule's tests.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         struct EnvScope {
             prev: Option<String>,
@@ -1247,7 +1244,7 @@ mod tests {
         // disabled / no-avatar-url tests cannot reach.
         #[test]
         fn test_render_with_image_uses_cached_avatar() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("ok");
             let _scope = EnvScope::set(&root);
 
@@ -1272,7 +1269,7 @@ mod tests {
             // and the `Some(v) => env::set_var(...)` arm on line 1197 stays
             // uncovered. Pre-set the variable before constructing an EnvScope
             // so prev = Some(v), forcing Drop to take the restore branch.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
 
             let sentinel_root = unique_cache_root("envscope-restore-sentinel");
@@ -1305,7 +1302,7 @@ mod tests {
         // takes the saturating-to-zero path.
         #[test]
         fn test_render_with_image_handles_more_info_than_image_rows() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("many");
             let _scope = EnvScope::set(&root);
 

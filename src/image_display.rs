@@ -547,12 +547,8 @@ mod tests {
 
     mod env_tests {
         use super::super::*;
+        use crate::test_support::lock_env;
         use std::env;
-        use std::sync::Mutex;
-
-        // Serialize env mutations across this submodule; the tests would
-        // otherwise race on shared environment state.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         const PROTOCOL_VARS: &[&str] = &[
             "KITTY_WINDOW_ID",
@@ -594,14 +590,14 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_returns_false_when_no_env_set() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             assert!(!is_sixel_capable_terminal());
         }
 
         #[test]
         fn test_is_sixel_capable_terminal_detects_wt_session() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("WT_SESSION", "1");
             assert!(is_sixel_capable_terminal());
@@ -609,7 +605,7 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_detects_known_term_program() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             for prog in ["WezTerm", "foot", "mlterm", "contour", "Black Box"] {
                 let _scope = EnvScope::clear_all();
                 env::set_var("TERM_PROGRAM", prog);
@@ -623,7 +619,7 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_unknown_term_program_is_false() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("TERM_PROGRAM", "Apple_Terminal");
             assert!(!is_sixel_capable_terminal());
@@ -631,7 +627,7 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_detects_lc_terminal_iterm2() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("LC_TERMINAL", "iTerm2");
             assert!(is_sixel_capable_terminal());
@@ -639,7 +635,7 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_lc_terminal_other_is_false() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("LC_TERMINAL", "something-else");
             assert!(!is_sixel_capable_terminal());
@@ -647,7 +643,7 @@ mod tests {
 
         #[test]
         fn test_is_sixel_capable_terminal_detects_xterm_version() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("XTERM_VERSION", "XTerm(370)");
             assert!(is_sixel_capable_terminal());
@@ -655,7 +651,7 @@ mod tests {
 
         #[test]
         fn test_detect_protocol_prefers_kitty() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("KITTY_WINDOW_ID", "42");
             // Even with iterm/sixel hints set, kitty wins.
@@ -666,7 +662,7 @@ mod tests {
 
         #[test]
         fn test_detect_protocol_iterm_when_no_kitty() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("ITERM_SESSION_ID", "abc");
             env::set_var("WT_SESSION", "1"); // sixel hint should not override
@@ -675,7 +671,7 @@ mod tests {
 
         #[test]
         fn test_detect_protocol_sixel_when_only_sixel_hint() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("WT_SESSION", "1");
             assert!(matches!(detect_protocol(), ResolvedProtocol::Sixel));
@@ -683,14 +679,14 @@ mod tests {
 
         #[test]
         fn test_detect_protocol_falls_back_to_block() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             assert!(matches!(detect_protocol(), ResolvedProtocol::Block));
         }
 
         #[test]
         fn test_resolve_protocol_auto_uses_detect() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             env::set_var("KITTY_WINDOW_ID", "1");
             assert!(matches!(
@@ -701,7 +697,7 @@ mod tests {
 
         #[test]
         fn test_resolve_protocol_auto_falls_back_to_block() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
             assert!(matches!(
                 resolve_protocol(&ImageProtocol::Auto),
@@ -713,7 +709,7 @@ mod tests {
         fn test_print_image_and_rewind_auto_block_returns_block_rows() {
             use image::{DynamicImage, ImageBuffer, Rgba};
 
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let _scope = EnvScope::clear_all();
 
             // Build a 2x2 image; with cols=4 the scale is 2, scaled_h is 4,
@@ -740,7 +736,7 @@ mod tests {
             // every var to be unset before EnvScope::clear_all so all six
             // `prev` slots capture None — the Drop then runs the `None`
             // branch for each, exercising the `None => env::remove_var(k)` arm.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer: Vec<(&'static str, Option<String>)> = PROTOCOL_VARS
                 .iter()
                 .map(|&k| (k, env::var(k).ok()))
@@ -773,13 +769,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod cache_fs_tests {
         use super::super::*;
+        use crate::test_support::lock_env;
         use image::{DynamicImage, ImageBuffer, Rgba};
         use std::env;
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // Serialize XDG_CACHE_HOME mutations across this submodule's tests.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         fn unique_cache_root(label: &str) -> std::path::PathBuf {
             let nanos = SystemTime::now()
@@ -826,7 +819,7 @@ mod tests {
 
         #[test]
         fn test_cache_dir_starts_with_xdg_root() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("dir");
             let _scope = EnvScope::set(&root);
 
@@ -837,7 +830,7 @@ mod tests {
 
         #[test]
         fn test_load_from_cache_returns_none_when_file_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("missing");
             let _scope = EnvScope::set(&root);
             assert!(!root.exists());
@@ -849,7 +842,7 @@ mod tests {
 
         #[test]
         fn test_load_from_cache_returns_none_when_file_is_not_image() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("corrupt");
             let _scope = EnvScope::set(&root);
 
@@ -865,7 +858,7 @@ mod tests {
 
         #[test]
         fn test_save_then_load_roundtrip_returns_equivalent_image() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("rt");
             let _scope = EnvScope::set(&root);
 
@@ -884,7 +877,7 @@ mod tests {
 
         #[test]
         fn test_save_to_cache_creates_directory_when_missing() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("mkdir");
             let _scope = EnvScope::set(&root);
             assert!(!root.exists());
@@ -910,7 +903,7 @@ mod tests {
 
         #[test]
         fn test_load_cached_or_download_returns_cached_without_network() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("cached");
             let _scope = EnvScope::set(&root);
 
@@ -931,7 +924,7 @@ mod tests {
 
         #[test]
         fn test_load_cached_or_download_uses_sanitized_key_lookup() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("sanitize");
             let _scope = EnvScope::set(&root);
 
@@ -970,7 +963,7 @@ mod tests {
 
         #[test]
         fn test_load_cached_or_download_returns_none_when_cache_miss_and_download_fails() {
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("miss-then-fail");
             let _scope = EnvScope::set(&root);
             assert!(!root.exists());
@@ -1117,7 +1110,7 @@ mod tests {
             // never runs. Force XDG_CACHE_HOME to be unset before EnvScope::set
             // so prev = None, then verify Drop removes the value we set during
             // the scope.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
             env::remove_var("XDG_CACHE_HOME");
 
@@ -1145,7 +1138,7 @@ mod tests {
             // exercises the `download_image(...).await?` and
             // `save_to_cache(...)` lines that the cache-hit and
             // download-failure tests don't reach.
-            let _guard = ENV_LOCK.lock().unwrap();
+            let _guard = lock_env();
             let root = unique_cache_root("download-then-save");
             let _scope = EnvScope::set(&root);
             assert!(!root.exists());
