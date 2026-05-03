@@ -398,4 +398,123 @@ mod tests {
         let xml = "<games><game>9999999999999</game><game>20</game></games>";
         assert_eq!(parse_games_xml(xml), vec![20]);
     }
+
+    #[cfg(target_os = "linux")]
+    mod steam_client_path_tests {
+        use super::super::*;
+        use std::env;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // $HOME mutation is process-global; serialize across tests in this submodule.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        struct HomeScope {
+            prev: Option<String>,
+        }
+
+        impl HomeScope {
+            fn set(home: &Path) -> Self {
+                let prev = env::var("HOME").ok();
+                env::set_var("HOME", home);
+                Self { prev }
+            }
+
+            fn unset() -> Self {
+                let prev = env::var("HOME").ok();
+                env::remove_var("HOME");
+                Self { prev }
+            }
+        }
+
+        impl Drop for HomeScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("HOME", v),
+                    None => env::remove_var("HOME"),
+                }
+            }
+        }
+
+        fn unique_root(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-native-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        fn touch(path: &Path) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"stub").unwrap();
+        }
+
+        #[test]
+        fn test_get_steam_client_path_returns_none_when_home_unset() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = HomeScope::unset();
+            assert!(get_steam_client_path().is_none());
+        }
+
+        #[test]
+        fn test_get_steam_client_path_returns_none_when_no_files_exist() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("none");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+            assert!(get_steam_client_path().is_none());
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_prefers_sdk64() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("sdk64");
+            let _scope = HomeScope::set(&root);
+            let sdk = root.join(".steam/sdk64/steamclient.so");
+            let local = root.join(".local/share/Steam/linux64/steamclient.so");
+            touch(&sdk);
+            touch(&local);
+
+            let found = get_steam_client_path().expect("sdk64 path should be returned");
+            assert_eq!(found, sdk.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_falls_back_to_steam_linux64() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("middle");
+            let _scope = HomeScope::set(&root);
+            let middle = root.join(".steam/steam/linux64/steamclient.so");
+            touch(&middle);
+
+            let found = get_steam_client_path().expect("steam/linux64 path should be returned");
+            assert_eq!(found, middle.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_falls_back_to_local_share() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_root("local");
+            let _scope = HomeScope::set(&root);
+            let local = root.join(".local/share/Steam/linux64/steamclient.so");
+            touch(&local);
+
+            let found = get_steam_client_path().expect("local/share/Steam path should be returned");
+            assert_eq!(found, local.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
 }
