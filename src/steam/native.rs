@@ -579,6 +579,82 @@ mod tests {
             let _ = fs::remove_dir_all(&root);
         }
 
+        // Pick the first existing system shared library from a portable list
+        // of common candidates. Returns None when none are present (the test
+        // that uses this will then no-op rather than fail spuriously on
+        // platforms where these libraries live elsewhere).
+        fn find_loadable_system_lib() -> Option<PathBuf> {
+            let candidates = [
+                "/lib/x86_64-linux-gnu/libdl.so.2",
+                "/lib/x86_64-linux-gnu/libpthread.so.0",
+                "/lib/x86_64-linux-gnu/libc.so.6",
+                "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+                "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+                "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                "/lib64/libdl.so.2",
+                "/lib64/libpthread.so.0",
+                "/lib64/libc.so.6",
+            ];
+            candidates
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|p| p.exists())
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_symbol_missing() {
+            // `Library::new` succeeds (we symlink to a real, loadable system
+            // library), but `lib.get(b"CreateInterface")` then fails because
+            // the loaded library does not export that symbol — exercises the
+            // `Err(e) => return None` arm of the CreateInterface match
+            // (lines ~152–158), a path the existing load-failure tests can't
+            // reach because their stub bytes never get past `Library::new`.
+            // verbose=false skips the eprintln.
+            let _guard = ENV_LOCK.lock().unwrap();
+
+            // Skip when no candidate system library is available — this
+            // platform isn't suitable for this test, treat it as a no-op
+            // rather than a failure.
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+
+            let root = unique_root("create-iface-missing");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real_lib, &target)
+                .expect("symlink to system lib should succeed in tmp dir");
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_symbol_missing_verbose() {
+            // Same CreateInterface-missing path with verbose=true — exercises
+            // both the "Found Steam client at" log and the "Failed to get
+            // CreateInterface" verbose log inside the symbol-lookup error
+            // arm.
+            let _guard = ENV_LOCK.lock().unwrap();
+
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+
+            let root = unique_root("create-iface-missing-verbose");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real_lib, &target)
+                .expect("symlink to system lib should succeed in tmp dir");
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
         #[test]
         fn test_homescope_drop_removes_home_when_prev_was_none() {
             // The other tests in this module run with $HOME already set, so
