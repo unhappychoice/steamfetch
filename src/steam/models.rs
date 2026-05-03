@@ -403,4 +403,40 @@ mod tests {
         let parsed: GlobalAchievementsResponse = serde_json::from_str(json).unwrap();
         assert!(parsed.achievementpercentages.achievements.is_empty());
     }
+
+    #[test]
+    fn test_deserialize_global_achievements_percent_unsupported_type_errors() {
+        // `percent` as a bool triggers serde's default `visit_bool`, which
+        // calls `Visitor::expecting()` to format the type-mismatch error.
+        let json = r#"{
+            "achievementpercentages": {
+                "achievements": [{"name": "ACH_BOOL", "percent": true}]
+            }
+        }"#;
+        let err = serde_json::from_str::<GlobalAchievementsResponse>(json)
+            .expect_err("bool percent should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("a float or string representing a float"),
+            "expected `expecting` message in error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_deserialize_global_achievements_percent_null_errors() {
+        // `null` similarly cannot be coerced; the default `visit_unit`
+        // rejects with the visitor's `expecting` text.
+        let json = r#"{
+            "achievementpercentages": {
+                "achievements": [{"name": "ACH_NULL", "percent": null}]
+            }
+        }"#;
+        let err = serde_json::from_str::<GlobalAchievementsResponse>(json)
+            .expect_err("null percent should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("a float or string representing a float"),
+            "expected `expecting` message in error, got: {msg}",
+        );
+    }
 }

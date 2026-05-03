@@ -564,5 +564,92 @@ steam_api_key = "file-key"
 
             let _ = fs::remove_file(&path);
         }
+
+        #[test]
+        fn test_load_propagates_load_config_file_error() {
+            // Invalid TOML in the config file makes `load_config_file` return
+            // Err, which `Config::load` propagates via `?` (line 94).
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::set("STEAM_API_KEY", "env-key");
+            let _sid = EnvScope::set("STEAM_ID", "env-sid");
+
+            let path = unique_path("load-bad-toml");
+            fs::write(&path, "this is = not [valid toml").unwrap();
+
+            let err = Config::load(Some(path.clone()))
+                .err()
+                .expect("invalid toml should error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("Failed to parse config file"),
+                "expected parse-failure context, got: {}",
+                msg
+            );
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_api_key_only_propagates_load_config_file_error() {
+            // Same `?` propagation in `load_api_key_only` (line 116).
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::set("STEAM_API_KEY", "env-key");
+
+            let path = unique_path("api-bad-toml");
+            fs::write(&path, "this is = not [valid toml").unwrap();
+
+            let err = Config::load_api_key_only(Some(path.clone()))
+                .expect_err("invalid toml should error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("Failed to parse config file"),
+                "expected parse-failure context, got: {}",
+                msg
+            );
+
+            let _ = fs::remove_file(&path);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_create_default_config_errors_when_parent_is_file() {
+        // A regular file used as a directory component makes `create_dir_all`
+        // fail; this exercises the `with_context` closure (lines 146–147).
+        let blocker = unique_temp_path("blocker");
+        fs::write(&blocker, "not a directory").unwrap();
+
+        let path = blocker.join("nested").join("config.toml");
+        let err = create_default_config(&path)
+            .expect_err("create_dir_all should fail when parent is a file");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to create config directory"),
+            "expected create-dir context, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_file(&blocker);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_config_file_read_failure_returns_error() {
+        // Pass a directory as the path: `p.exists()` is true (directories
+        // exist), but `fs::read_to_string` fails, hitting the read-context
+        // closure on line 131.
+        let dir = unique_temp_path("read-fail-dir");
+        fs::create_dir_all(&dir).unwrap();
+
+        let err = load_config_file(Some(dir.clone()))
+            .expect_err("reading a directory as a file should error");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to read config file"),
+            "expected read-context, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_dir(&dir);
     }
 }
