@@ -658,32 +658,157 @@ mod tests {
         let games = super::super::models::OwnedGamesData {
             game_count: 3,
             games: vec![
-                super::super::models::Game {
-                    appid: 1,
-                    name: Some("A".to_string()),
-                    playtime_forever: 10,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
-                super::super::models::Game {
-                    appid: 2,
-                    name: Some("B".to_string()),
-                    playtime_forever: 100,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
-                super::super::models::Game {
-                    appid: 3,
-                    name: Some("C".to_string()),
-                    playtime_forever: 50,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
+                make_game(1, Some("A"), 10),
+                make_game(2, Some("B"), 100),
+                make_game(3, Some("C"), 50),
             ],
         };
         let top = extract_top_games(&games);
         assert_eq!(top[0].name, "B");
         assert_eq!(top[1].name, "C");
         assert_eq!(top[2].name, "A");
+    }
+
+    fn make_game(appid: u32, name: Option<&str>, playtime: u32) -> super::super::models::Game {
+        super::super::models::Game {
+            appid,
+            name: name.map(|n| n.to_string()),
+            playtime_forever: playtime,
+            playtime_2weeks: 0,
+            rtime_last_played: 0,
+        }
+    }
+
+    #[test]
+    fn test_detect_api_error_forbidden_message() {
+        let body = r#"{"error":"Forbidden"}"#;
+        let result = detect_api_error(body, false);
+        let err = result.unwrap_err();
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_access_is_denied_message() {
+        let body = "<html><body>Access is denied</body></html>";
+        let result = detect_api_error(body, false);
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_players_with_space() {
+        let body = r#"{"response":{"players": []}}"#;
+        let err = detect_api_error(body, false).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PlayerNotFound
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_empty_games_array_with_key_is_ok() {
+        let body = r#"{"response":{"game_count":0,"games":[]}}"#;
+        assert!(detect_private_profile(body).is_ok());
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_with_zero_count_is_private() {
+        let body = r#"{"response":{"game_count":0"#; // truncated/invalid JSON
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PrivateProfile
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_without_games_is_private() {
+        let body = "totally not json";
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PrivateProfile
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_other_returns_anyhow() {
+        // Has "games" key but is malformed → falls through to the
+        // generic "Failed to parse owned games response" branch.
+        let body = r#"{"response":{"games":"not_an_array"}}"#;
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(err.downcast_ref::<SteamApiError>().is_none());
+        assert!(err.to_string().contains("Failed to parse owned games"));
+    }
+
+    #[test]
+    fn test_extract_top_games_empty_input() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 0,
+            games: vec![],
+        };
+        let top = extract_top_games(&games);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn test_extract_top_games_truncates_to_five() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 7,
+            games: (0..7)
+                .map(|i| make_game(i as u32, Some(&format!("G{}", i)), (i as u32) * 10))
+                .collect(),
+        };
+        let top = extract_top_games(&games);
+        assert_eq!(top.len(), 5);
+        assert_eq!(top[0].name, "G6");
+        assert_eq!(top[4].name, "G2");
+    }
+
+    #[test]
+    fn test_extract_top_games_falls_back_to_appid_when_name_missing() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 1,
+            games: vec![make_game(12345, None, 60)],
+        };
+        let top = extract_top_games(&games);
+        assert_eq!(top[0].name, "App 12345");
+        assert_eq!(top[0].playtime_minutes, 60);
+    }
+
+    #[test]
+    fn test_steam_client_builder_defaults() {
+        let c = SteamClient::new("k".to_string(), "id".to_string());
+        assert!(!c.verbose);
+        assert_eq!(c.timeout, Duration::from_secs(DEFAULT_TIMEOUT_SECS));
+        assert_eq!(c.api_key, "k");
+        assert_eq!(c.steam_id, "id");
+    }
+
+    #[test]
+    fn test_steam_client_with_verbose_sets_flag() {
+        let c = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+        assert!(c.verbose);
+    }
+
+    #[test]
+    fn test_steam_client_with_timeout_overrides_default() {
+        let c = SteamClient::new("k".into(), "id".into()).with_timeout(7);
+        assert_eq!(c.timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn test_build_http_client_does_not_panic() {
+        // Constructs and drops the client to ensure the builder
+        // settings remain valid.
+        let _ = build_http_client(Duration::from_secs(1));
+        let _ = build_http_client(Duration::from_secs(120));
     }
 }
