@@ -445,6 +445,21 @@ mod tests {
         cursor_right(5);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_ioctl_does_not_panic_on_captured_stdout() {
+        // Under `cargo test` the test binary's stdout is captured by the
+        // runner, so `ioctl(STDOUT_FILENO, TIOCGWINSZ, ...)` typically
+        // returns -1 and the function short-circuits to None. Exercises
+        // the function entry, the ioctl syscall, the short-circuit on
+        // `r != 0`, and the trailing `None` fallback — paths that no
+        // existing test reaches because nothing else calls the helper
+        // directly. Even on hosts where ioctl succeeds without pixel
+        // info (`ws_xpixel == 0`), the contract is still that the call
+        // returns without panicking.
+        let _ = query_cell_size_ioctl();
+    }
+
     mod print_tests {
         use super::super::*;
         use image::{DynamicImage, ImageBuffer, Rgba};
