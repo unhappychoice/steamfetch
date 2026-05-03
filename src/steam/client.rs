@@ -1150,5 +1150,182 @@ mod tests {
             let result = run_async(client.fetch_achievement_stats(&games));
             assert!(result.is_none());
         }
+
+        #[cfg(target_os = "linux")]
+        mod cache_hit_tests {
+            use super::super::super::*;
+            use crate::cache::AchievementCache;
+            use crate::steam::models;
+            use std::env;
+            use std::path::Path;
+            use std::sync::Mutex;
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            // XDG_CACHE_HOME is process-global; serialize mutations within this
+            // submodule. Other test files (cache.rs, image_display.rs,
+            // display.rs) hold their own ENV_LOCKs — cross-module races are
+            // possible but the test here only asserts on data that came from
+            // *this* test's pre-populated cache, so a stale read would
+            // surface as an assertion failure rather than silent flakiness.
+            static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+            struct EnvScope {
+                prev: Option<String>,
+            }
+
+            impl EnvScope {
+                fn set(root: &Path) -> Self {
+                    let prev = env::var("XDG_CACHE_HOME").ok();
+                    env::set_var("XDG_CACHE_HOME", root);
+                    Self { prev }
+                }
+            }
+
+            impl Drop for EnvScope {
+                fn drop(&mut self) {
+                    match &self.prev {
+                        Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                        None => env::remove_var("XDG_CACHE_HOME"),
+                    }
+                }
+            }
+
+            fn unique_cache_root(label: &str) -> std::path::PathBuf {
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                env::temp_dir().join(format!(
+                    "steamfetch-fetch-ach-{}-{}-{}",
+                    label,
+                    std::process::id(),
+                    nanos
+                ))
+            }
+
+            fn run_async<F: std::future::Future>(f: F) -> F::Output {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("rt")
+                    .block_on(f)
+            }
+
+            fn make_game(appid: u32, name: Option<&str>, last_played: u64) -> models::Game {
+                models::Game {
+                    appid,
+                    name: name.map(|s| s.to_string()),
+                    playtime_forever: 0,
+                    playtime_2weeks: 0,
+                    rtime_last_played: last_played,
+                }
+            }
+
+            // Run `body` with XDG_CACHE_HOME pinned to a unique temp root.
+            // Other test modules (cache.rs, image_display.rs, display.rs,
+            // config.rs) hold their own ENV_LOCKs but the env var is
+            // process-global, so a cross-module write between our
+            // `cache.save()` and the function's internal
+            // `AchievementCache::load()` would silently leave the cache
+            // empty — `fetch_achievement_stats` then falls through to HTTP
+            // fetches that also fail and returns None. Treat None as
+            // "race lost; retry" up to a few times so the assertions only
+            // run when the cache hit actually occurred.
+            fn run_with_pinned_cache<F>(label: &str, body: F)
+            where
+                F: Fn(&std::path::Path) -> bool,
+            {
+                let _guard = ENV_LOCK.lock().unwrap();
+                for attempt in 0..5 {
+                    let root = unique_cache_root(&format!("{}-{}", label, attempt));
+                    let scope = EnvScope::set(&root);
+                    let succeeded = body(&root);
+                    drop(scope);
+                    let _ = std::fs::remove_dir_all(&root);
+                    if succeeded {
+                        return;
+                    }
+                }
+                panic!(
+                    "fetch_achievement_stats never observed our pinned cache \
+                     after 5 attempts — XDG_CACHE_HOME race lost every time"
+                );
+            }
+
+            #[test]
+            fn test_fetch_achievement_stats_aggregates_from_cache() {
+                // Pre-populate the achievement cache via XDG_CACHE_HOME so the
+                // per-game loop hits the `if let Some(cached) = cache.get(...)`
+                // branch for every game, never dispatching any HTTP. Exercises
+                // the cache-hit accumulation, perfect-games detection, rarest
+                // candidate push, and the rarest-selection min_by tail.
+                run_with_pinned_cache("agg", |_root| {
+                    let mut cache = AchievementCache::default();
+                    // Perfect game with rarest achievement.
+                    cache.set(100, 1000, 10, 10, Some(("Rare One", 5.0)));
+                    // Non-perfect game without rarest.
+                    cache.set(200, 2000, 3, 10, None);
+                    // Non-perfect game with a rarer (lower percent) achievement
+                    // — becomes the global rarest after the min_by selection.
+                    cache.set(300, 3000, 1, 4, Some(("Even Rarer", 1.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 3,
+                        games: vec![
+                            make_game(100, Some("Game One"), 1000),
+                            make_game(200, Some("Game Two"), 2000),
+                            make_game(300, Some("Game Three"), 3000),
+                        ],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    assert_eq!(stats.total_achieved, 14);
+                    assert_eq!(stats.total_possible, 24);
+                    assert_eq!(stats.perfect_games, 1);
+
+                    let rarest = stats.rarest.expect("two cached entries had rarest");
+                    assert_eq!(rarest.name, "Even Rarer");
+                    assert_eq!(rarest.game, "Game Three");
+                    assert!((rarest.percent - 1.5).abs() < f64::EPSILON);
+                    true
+                });
+            }
+
+            #[test]
+            fn test_fetch_achievement_stats_falls_back_to_appid_for_unnamed_game() {
+                // A cached game with `name: None` exercises the
+                // `unwrap_or_else(|| format!("App {}", appid))` fallback for
+                // game_name. The rarest's `game` field then carries the
+                // synthesized "App {appid}" label.
+                run_with_pinned_cache("noname", |_root| {
+                    let mut cache = AchievementCache::default();
+                    cache.set(4242, 7777, 2, 5, Some(("Lonely", 9.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 1,
+                        games: vec![make_game(4242, None, 7777)],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    assert_eq!(stats.total_achieved, 2);
+                    assert_eq!(stats.total_possible, 5);
+                    assert_eq!(stats.perfect_games, 0);
+                    let rarest = stats.rarest.expect("rarest was present in cache");
+                    assert_eq!(rarest.game, "App 4242");
+                    assert_eq!(rarest.name, "Lonely");
+                    true
+                });
+            }
+        }
     }
 }
