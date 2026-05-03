@@ -556,6 +556,7 @@ fn format_number(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::steam::{AchievementStats, RarestAchievement};
 
     fn strip_ansi(s: &str) -> String {
         let mut result = String::new();
@@ -931,5 +932,156 @@ mod tests {
         let times = vec!["0m".to_string()];
         let width = tree_name_width(&items, &times, 200);
         assert_eq!(width, long_name.width());
+    }
+
+    fn make_minimal_stats() -> SteamStats {
+        SteamStats {
+            username: "alice".to_string(),
+            game_count: 10,
+            unplayed_count: 2,
+            total_playtime_minutes: 1200,
+            top_games: vec![GameStat {
+                name: "Game A".to_string(),
+                playtime_minutes: 600,
+            }],
+            achievement_stats: None,
+            account_created: None,
+            steam_level: None,
+            recently_played: Vec::new(),
+            avatar_url: None,
+        }
+    }
+
+    fn lines_text(lines: &[String]) -> String {
+        lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_build_info_lines_minimal_includes_required_sections() {
+        let stats = make_minimal_stats();
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("alice@Steam"));
+        assert!(text.contains("Games:"));
+        assert!(text.contains("Unplayed:"));
+        assert!(text.contains("Playtime:"));
+        assert!(text.contains("Top Played"));
+        assert!(text.contains("Game A"));
+        assert!(!text.contains("Member:"));
+        assert!(!text.contains("Level:"));
+        assert!(!text.contains("Perfect:"));
+        assert!(!text.contains("Achievements:"));
+        assert!(!text.contains("Recently Played"));
+        assert!(!text.contains("Rarest"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_steam_level_adds_level() {
+        let mut stats = make_minimal_stats();
+        stats.steam_level = Some(42);
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Level:"));
+        assert!(text.contains("42"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_account_created_adds_member() {
+        let mut stats = make_minimal_stats();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        stats.account_created = Some(now);
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Member:"));
+        assert!(text.contains("0 years"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_achievements_adds_perfect_and_achievements() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 50,
+            total_possible: 100,
+            perfect_games: 3,
+            rarest: None,
+        });
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Perfect:"));
+        assert!(text.contains("Achievements:"));
+        assert!(text.contains("50"));
+        assert!(text.contains("(50%)"));
+        assert!(!text.contains("Rarest"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_rarest_adds_rarest_section() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 1,
+            total_possible: 10,
+            perfect_games: 0,
+            rarest: Some(RarestAchievement {
+                name: "Hidden Gem".to_string(),
+                game: "Mystery Game".to_string(),
+                percent: 0.7,
+            }),
+        });
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Rarest"));
+        assert!(text.contains("Hidden Gem"));
+        assert!(text.contains("Mystery Game"));
+        assert!(text.contains("0.7%"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_recently_played_adds_section() {
+        let mut stats = make_minimal_stats();
+        stats.recently_played = vec![GameStat {
+            name: "Recent Game".to_string(),
+            playtime_minutes: 75,
+        }];
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Recently Played"));
+        assert!(text.contains("Recent Game"));
+        assert!(text.contains("1h 15m"));
+    }
+
+    #[test]
+    fn test_build_info_lines_unplayed_percentage_rounds() {
+        let mut stats = make_minimal_stats();
+        stats.game_count = 4;
+        stats.unplayed_count = 1;
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("(25%)"));
+    }
+
+    #[test]
+    fn test_account_age_years_recent_returns_zero() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(account_age_years(now), 0);
+    }
+
+    #[test]
+    fn test_account_age_years_one_year_ago() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let one_year_secs = 60 * 60 * 24 * 365;
+        assert_eq!(account_age_years(now - one_year_secs - 100), 1);
     }
 }
