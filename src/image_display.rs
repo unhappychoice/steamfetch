@@ -896,5 +896,74 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(&root);
         }
+
+        // Bind to a random port, capture it, then drop the listener.
+        // Guarantees nothing is listening on the returned URL so reqwest
+        // fails fast with a connection error rather than timing out.
+        fn unbound_localhost_url(suffix: &str) -> String {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local_addr").port();
+            drop(listener);
+            format!("http://127.0.0.1:{}/{}", port, suffix)
+        }
+
+        #[test]
+        fn test_download_image_returns_none_when_url_unreachable() {
+            // download_image is private; reach it through this submodule's
+            // `use super::super::*;`. Connection refused → reqwest's send
+            // returns Err, hits `.ok()?` and returns None.
+            let url = unbound_localhost_url("never.png");
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_load_cached_or_download_returns_none_when_cache_miss_and_download_fails() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("miss-then-fail");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            // Cache is empty, so the function falls through to download_image,
+            // which fails (connection refused) — overall result is None.
+            let url = unbound_localhost_url("absent.png");
+            let result = run_async(load_cached_or_download(&url, "absent.png"));
+            assert!(result.is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_download_image_returns_none_when_response_is_not_an_image() {
+            // Spawn a tiny one-shot HTTP server that returns 200 OK with a
+            // non-image body. reqwest succeeds, bytes are read, but
+            // image::load_from_memory fails → returns None.
+            // This exercises the final `.ok()` on line 347.
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/junk.png", addr);
+
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                // Drain request headers (best-effort).
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = b"not actually a PNG";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            });
+
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+            let _ = server.join();
+        }
     }
 }
