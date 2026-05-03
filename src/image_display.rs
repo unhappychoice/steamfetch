@@ -1053,6 +1053,40 @@ mod tests {
         }
 
         #[test]
+        fn test_envscope_drop_removes_xdg_cache_home_when_prev_was_none() {
+            // Sibling tests in other modules (cache.rs, display.rs, client.rs
+            // cache_hit_tests) hold their own ENV_LOCKs but XDG_CACHE_HOME is
+            // process-global; whichever value is set when an EnvScope here
+            // captures `prev` dictates which Drop arm runs. In typical runs
+            // some other module has set the var, so EnvScope's
+            // `Some(v) => env::set_var(...)` arm dominates and the
+            // `None => env::remove_var("XDG_CACHE_HOME")` branch on line 798
+            // never runs. Force XDG_CACHE_HOME to be unset before EnvScope::set
+            // so prev = None, then verify Drop removes the value we set during
+            // the scope.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+            env::remove_var("XDG_CACHE_HOME");
+
+            let root = unique_cache_root("envscope-none-arm");
+            std::fs::create_dir_all(&root).unwrap();
+            {
+                let _scope = EnvScope::set(&root);
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), root.to_string_lossy());
+            }
+
+            // Drop ran the `None => env::remove_var("XDG_CACHE_HOME")` branch.
+            assert!(env::var("XDG_CACHE_HOME").is_err());
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
         fn test_load_cached_or_download_fetches_and_saves_when_cache_miss() {
             // Empty cache + reachable HTTP server returning a real PNG →
             // exercises the `download_image(...).await?` and
