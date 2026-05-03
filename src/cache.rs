@@ -138,4 +138,128 @@ mod tests {
         assert_eq!(b.total, 50);
         assert!(b.rarest_name.is_none());
     }
+
+    #[test]
+    fn test_cache_path_ends_with_steamfetch_achievements_json() {
+        // `dirs::cache_dir()` can return None on exotic platforms; only
+        // assert when it exists (mirrors the pattern in image_display tests).
+        if let Some(path) = cache_path() {
+            assert!(path.ends_with("steamfetch/achievements.json"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod fs_tests {
+        use super::super::*;
+        use std::env;
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Serialize XDG_CACHE_HOME mutations across this submodule's tests
+        // so they don't race against each other.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        fn unique_cache_root(label: &str) -> std::path::PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-cache-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &std::path::Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_cache_path_uses_xdg_cache_home() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("xdg");
+            let _scope = EnvScope::set(&root);
+
+            let path = cache_path().expect("XDG_CACHE_HOME set, path must exist");
+            assert!(path.starts_with(&root));
+            assert!(path.ends_with("steamfetch/achievements.json"));
+        }
+
+        #[test]
+        fn test_load_returns_default_when_cache_file_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("missing");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            let cache = AchievementCache::load();
+            assert!(cache.get(1, 0).is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_returns_default_when_cache_file_corrupt() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("corrupt");
+            let _scope = EnvScope::set(&root);
+
+            let path = cache_path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "{not valid json").unwrap();
+
+            let cache = AchievementCache::load();
+            assert!(cache.get(1, 0).is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_save_then_load_roundtrip_persists_entries() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("rt");
+            let _scope = EnvScope::set(&root);
+
+            let mut cache = AchievementCache::default();
+            cache.set(101, 5000, 7, 10, Some(("Rare", 0.5)));
+            cache.set(202, 6000, 0, 5, None);
+            cache.save();
+
+            // The file should exist on disk after save().
+            let path = cache_path().unwrap();
+            assert!(path.exists(), "save() must create the cache file");
+
+            let loaded = AchievementCache::load();
+            let a = loaded.get(101, 5000).expect("entry should persist");
+            assert_eq!(a.achieved, 7);
+            assert_eq!(a.total, 10);
+            assert_eq!(a.rarest_name.as_deref(), Some("Rare"));
+            assert_eq!(a.rarest_percent, Some(0.5));
+
+            let b = loaded.get(202, 6000).expect("entry should persist");
+            assert_eq!(b.total, 5);
+            assert!(b.rarest_name.is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 }
