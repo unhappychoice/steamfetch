@@ -1164,4 +1164,138 @@ mod tests {
         };
         render(&stats, &config).await;
     }
+
+    #[cfg(target_os = "linux")]
+    mod render_with_image_cache_tests {
+        use super::super::*;
+        use super::make_minimal_stats;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+        use std::env;
+        use std::io::Cursor;
+        use std::path::{Path, PathBuf};
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Serialize XDG_CACHE_HOME mutations across this submodule's tests.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        fn unique_cache_root(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-render-image-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        fn write_avatar_to_cache(root: &Path, username: &str) {
+            let dir = root.join("steamfetch").join("images");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(4, 4);
+            for y in 0..4 {
+                for x in 0..4 {
+                    buf.put_pixel(x, y, Rgba([10 * x as u8, 10 * y as u8, 200, 255]));
+                }
+            }
+            let img = DynamicImage::ImageRgba8(buf);
+            let mut png = Cursor::new(Vec::new());
+            img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+            let cache_key = format!("avatar_{}.png", username);
+            std::fs::write(dir.join(cache_key), png.into_inner()).unwrap();
+        }
+
+        // Build a single-thread runtime so the sync test can drive async
+        // code while keeping the env lock guard alive across the await
+        // (clippy::await_holding_lock would fire on a #[tokio::test]).
+        fn run_async<F: std::future::Future>(fut: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(fut)
+        }
+
+        // Drives `render_with_image`'s success path: cache hit returns an
+        // image, `print_image_and_rewind` succeeds (Sixel works without a
+        // TTY), and the info-line writer loop runs to completion. This
+        // exercises lines 40–78 of display.rs that the
+        // disabled / no-avatar-url tests cannot reach.
+        #[test]
+        fn test_render_with_image_uses_cached_avatar() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("ok");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "rendertest".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/never".to_string());
+            write_avatar_to_cache(&root, &stats.username);
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        // Same as above, but with many info lines so the
+        // `extra = image_rows.saturating_sub(info_lines.len())` branch
+        // takes the saturating-to-zero path.
+        #[test]
+        fn test_render_with_image_handles_more_info_than_image_rows() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("many");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "manytest".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/never".to_string());
+            // Add an account_created + steam_level + achievements so that
+            // build_info_lines emits enough rows to exceed IMAGE_ROWS (18).
+            stats.account_created = Some(1_500_000_000);
+            stats.steam_level = Some(42);
+            stats.recently_played = (0..10)
+                .map(|i| GameStat {
+                    name: format!("Recent {}", i),
+                    playtime_minutes: 100,
+                })
+                .collect();
+            write_avatar_to_cache(&root, &stats.username);
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 }
