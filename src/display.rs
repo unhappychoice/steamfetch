@@ -798,12 +798,31 @@ mod tests {
         assert_eq!(account_age_title(0).0, "Fresh Blood");
         assert_eq!(account_age_title(1).0, "Newcomer");
         assert_eq!(account_age_title(2).0, "Getting Hooked");
+        assert_eq!(account_age_title(3).0, "Loyal Customer");
+        assert_eq!(account_age_title(4).0, "Seasoned Gamer");
         assert_eq!(account_age_title(5).0, "Veteran");
+        assert_eq!(account_age_title(6).0, "Battle-Hardened");
+        assert_eq!(account_age_title(7).0, "Old Guard");
+        assert_eq!(account_age_title(8).0, "Ancient One");
+        assert_eq!(account_age_title(9).0, "Living Legend");
         assert_eq!(account_age_title(10).0, "Decade Survivor");
+        assert_eq!(account_age_title(11).0, "Time Traveler");
+        assert_eq!(account_age_title(12).0, "Eternal Witness");
+        assert_eq!(account_age_title(13).0, "Unlucky Thirteen");
+        assert_eq!(account_age_title(14).0, "Steam Fossil");
         assert_eq!(account_age_title(15).0, "Digital Dinosaur");
+        assert_eq!(account_age_title(16).0, "Prehistoric Gamer");
+        assert_eq!(account_age_title(17).0, "Before It Was Cool");
         assert_eq!(account_age_title(18).0, "OG Steam User");
         assert_eq!(account_age_title(19).0, "Founding Father");
         assert_eq!(account_age_title(99).0, "Primordial Entity");
+    }
+
+    #[test]
+    fn test_account_age_title_returns_distinct_colors_per_year() {
+        let colors: Vec<_> = (0..=19).map(|y| account_age_title(y).1).collect();
+        let unique: std::collections::HashSet<_> = colors.iter().collect();
+        assert_eq!(unique.len(), colors.len());
     }
 
     #[test]
