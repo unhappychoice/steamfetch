@@ -578,5 +578,33 @@ mod tests {
 
             let _ = fs::remove_dir_all(&root);
         }
+
+        #[test]
+        fn test_homescope_drop_removes_home_when_prev_was_none() {
+            // The other tests in this module run with $HOME already set, so
+            // HomeScope::Drop's `Some(v)` arm is the only one ever hit. Force
+            // $HOME to be unset before HomeScope::set so prev = None,
+            // exercising the `None => env::remove_var("HOME")` branch on Drop.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer_prev = env::var("HOME").ok();
+            env::remove_var("HOME");
+
+            let root = unique_root("homescope-none-arm");
+            fs::create_dir_all(&root).unwrap();
+            {
+                let _scope = HomeScope::set(&root);
+                assert_eq!(env::var("HOME").unwrap(), root.to_string_lossy());
+            }
+
+            // Drop ran the `None => env::remove_var("HOME")` branch.
+            assert!(env::var("HOME").is_err());
+
+            match outer_prev {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+
+            let _ = fs::remove_dir_all(&root);
+        }
     }
 }

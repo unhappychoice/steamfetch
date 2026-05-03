@@ -717,6 +717,42 @@ mod tests {
             let result = print_image_and_rewind(&img, &ImageProtocol::Auto, 4, 99);
             assert_eq!(result, Some(2));
         }
+
+        #[test]
+        fn test_envscope_drop_removes_protocol_vars_when_prev_was_none() {
+            // Other tests in this module may run with one or more PROTOCOL_VARS
+            // already set, so EnvScope::Drop's `Some(v)` arm dominates. Force
+            // every var to be unset before EnvScope::clear_all so all six
+            // `prev` slots capture None — the Drop then runs the `None`
+            // branch for each, exercising the `None => env::remove_var(k)` arm.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer: Vec<(&'static str, Option<String>)> = PROTOCOL_VARS
+                .iter()
+                .map(|&k| (k, env::var(k).ok()))
+                .collect();
+            for (k, _) in &outer {
+                env::remove_var(k);
+            }
+
+            {
+                let _scope = EnvScope::clear_all();
+                // While in scope, set one var so we can verify Drop removes it.
+                env::set_var("WT_SESSION", "scoped-marker");
+                assert_eq!(env::var("WT_SESSION").unwrap(), "scoped-marker");
+            }
+
+            // Drop ran the `None => env::remove_var(k)` branch for each var.
+            for &k in PROTOCOL_VARS {
+                assert!(env::var(k).is_err(), "{} should have been removed", k);
+            }
+
+            for (k, v) in &outer {
+                match v {
+                    Some(val) => env::set_var(k, val),
+                    None => env::remove_var(k),
+                }
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]

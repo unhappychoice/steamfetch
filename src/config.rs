@@ -609,6 +609,32 @@ steam_api_key = "file-key"
 
             let _ = fs::remove_file(&path);
         }
+
+        #[test]
+        fn test_envscope_drop_restores_previous_value_when_present() {
+            // The other tests in this module always start with the env var
+            // unset, so EnvScope::Drop's `None` arm is the only one ever hit.
+            // Pre-seed the var so prev is Some, exercising the `Some(v)` arm
+            // that restores the prior value on Drop.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer_prev = env::var("STEAM_API_KEY").ok();
+
+            let sentinel = "preexisting-sentinel-value";
+            env::set_var("STEAM_API_KEY", sentinel);
+
+            {
+                let _scope = EnvScope::set("STEAM_API_KEY", "scoped-value");
+                assert_eq!(env::var("STEAM_API_KEY").unwrap(), "scoped-value");
+            }
+
+            // Drop ran the `Some(v) => env::set_var(self.key, v)` branch.
+            assert_eq!(env::var("STEAM_API_KEY").unwrap(), sentinel);
+
+            match outer_prev {
+                Some(v) => env::set_var("STEAM_API_KEY", v),
+                None => env::remove_var("STEAM_API_KEY"),
+            }
+        }
     }
 
     #[cfg(unix)]
