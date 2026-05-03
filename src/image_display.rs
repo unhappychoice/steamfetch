@@ -965,5 +965,95 @@ mod tests {
             assert!(result.is_none());
             let _ = server.join();
         }
+
+        // Encodes a tiny image as PNG bytes for use as a mock HTTP response.
+        fn png_bytes(img: &DynamicImage) -> Vec<u8> {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, image::ImageFormat::Png)
+                .expect("encode PNG");
+            buf.into_inner()
+        }
+
+        // Spawn a one-shot HTTP server that returns the given PNG bytes
+        // with status 200, then exits.
+        fn spawn_png_server(png: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/avatar.png", addr);
+
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    png.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(&png);
+                let _ = stream.flush();
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_download_image_returns_some_when_response_is_a_png() {
+            // Cache-independent: just verifies the success branch of
+            // download_image where reqwest yields bytes that decode to a
+            // valid image.
+            let img = make_test_image();
+            let (url, server) = spawn_png_server(png_bytes(&img));
+
+            let result = run_async(download_image(&url)).expect("PNG body should decode");
+            assert_eq!(result.width(), img.width());
+            assert_eq!(result.height(), img.height());
+            assert_eq!(result.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_load_cached_or_download_fetches_and_saves_when_cache_miss() {
+            // Empty cache + reachable HTTP server returning a real PNG →
+            // exercises the `download_image(...).await?` and
+            // `save_to_cache(...)` lines that the cache-hit and
+            // download-failure tests don't reach.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("download-then-save");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            let img = make_test_image();
+            let (url, server) = spawn_png_server(png_bytes(&img));
+
+            let key = "fresh-avatar.png";
+            let downloaded = run_async(load_cached_or_download(&url, key))
+                .expect("server returns a PNG, decode must succeed");
+            assert_eq!(downloaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            // The save_to_cache call should have written the image under
+            // the sanitized key inside cache_dir().
+            let cached_path = cache_dir()
+                .expect("XDG_CACHE_HOME is set, cache_dir must resolve")
+                .join(key);
+            assert!(
+                cached_path.exists(),
+                "save_to_cache should have written {:?}",
+                cached_path
+            );
+
+            // Round-trip: load_from_cache on the same key yields the same
+            // bytes; this confirms the saved file is a valid image.
+            let reloaded =
+                load_from_cache(key).expect("file just written by save_to_cache should reload");
+            assert_eq!(reloaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = server.join();
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 }
