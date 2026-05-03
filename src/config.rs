@@ -725,4 +725,25 @@ steam_api_key = "file-key"
 
         let _ = fs::remove_file(&blocker);
     }
+
+    #[test]
+    fn test_create_default_config_skips_create_dir_when_path_has_no_parent() {
+        // `PathBuf::new()` is the empty path; `Path::new("").parent()` returns
+        // `None`, so `create_default_config` skips the `if let Some(parent)`
+        // arm entirely — exercising the empty-else branch of the if-let that
+        // every other `create_default_config` test misses (they all pass paths
+        // with a parent component).
+        //
+        // `fs::write("", DEFAULT_CONFIG)` then fails with NotFound, which
+        // surfaces through the write-context closure as "Failed to write
+        // config file: ".
+        let path = PathBuf::new();
+        let err = create_default_config(&path).expect_err("write to an empty path should fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to write config file"),
+            "expected write-context, got: {}",
+            msg
+        );
+    }
 }
