@@ -439,4 +439,49 @@ mod tests {
             "expected `expecting` message in error, got: {msg}",
         );
     }
+
+    #[test]
+    fn test_deserialize_global_achievements_percent_from_slice_float() {
+        // `from_slice` drives `deserialize_percent` through serde_json's
+        // `SliceRead`, a different monomorphization than `from_str`'s
+        // `StrRead` — exercising a previously-uncovered instantiation of
+        // the visitor's `visit_f64` arm.
+        let bytes = br#"{
+            "achievementpercentages": {
+                "achievements": [{"name": "ACH_BYTES_F", "percent": 33.5}]
+            }
+        }"#;
+        let parsed: GlobalAchievementsResponse =
+            serde_json::from_slice(bytes).expect("from_slice should parse float percent");
+        assert_eq!(parsed.achievementpercentages.achievements.len(), 1);
+        assert!(
+            (parsed.achievementpercentages.achievements[0].percent - 33.5).abs() < f64::EPSILON
+        );
+    }
+
+    #[test]
+    fn test_deserialize_global_achievements_percent_from_slice_string() {
+        // Same `SliceRead` driver, but routes through `visit_str`.
+        let bytes = br#"{
+            "achievementpercentages": {
+                "achievements": [{"name": "ACH_BYTES_S", "percent": "9.5"}]
+            }
+        }"#;
+        let parsed: GlobalAchievementsResponse =
+            serde_json::from_slice(bytes).expect("from_slice should parse string percent");
+        assert!((parsed.achievementpercentages.achievements[0].percent - 9.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_deserialize_global_achievements_percent_from_slice_invalid_string_errors() {
+        // `SliceRead` instantiation of the invalid-string path; the visitor's
+        // `visit_str` parses the input and surfaces the parse failure.
+        let bytes = br#"{
+            "achievementpercentages": {
+                "achievements": [{"name": "ACH_BYTES_BAD", "percent": "not-a-number"}]
+            }
+        }"#;
+        let result: Result<GlobalAchievementsResponse, _> = serde_json::from_slice(bytes);
+        assert!(result.is_err());
+    }
 }
