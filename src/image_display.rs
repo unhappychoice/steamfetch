@@ -609,4 +609,183 @@ mod tests {
             ));
         }
     }
+
+    #[cfg(target_os = "linux")]
+    mod cache_fs_tests {
+        use super::super::*;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+        use std::env;
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Serialize XDG_CACHE_HOME mutations across this submodule's tests.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        fn unique_cache_root(label: &str) -> std::path::PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-image-cache-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &std::path::Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        fn make_test_image() -> DynamicImage {
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
+            buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+            buf.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+            buf.put_pixel(0, 1, Rgba([0, 0, 255, 255]));
+            buf.put_pixel(1, 1, Rgba([255, 255, 0, 255]));
+            DynamicImage::ImageRgba8(buf)
+        }
+
+        #[test]
+        fn test_cache_dir_starts_with_xdg_root() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("dir");
+            let _scope = EnvScope::set(&root);
+
+            let dir = cache_dir().expect("XDG_CACHE_HOME set, cache_dir must exist");
+            assert!(dir.starts_with(&root));
+            assert!(dir.ends_with("steamfetch/images"));
+        }
+
+        #[test]
+        fn test_load_from_cache_returns_none_when_file_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("missing");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            assert!(load_from_cache("does-not-exist.png").is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_from_cache_returns_none_when_file_is_not_image() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("corrupt");
+            let _scope = EnvScope::set(&root);
+
+            let dir = cache_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("not-an-image.png");
+            std::fs::write(&path, b"this is not a PNG").unwrap();
+
+            assert!(load_from_cache("not-an-image.png").is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_save_then_load_roundtrip_returns_equivalent_image() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("rt");
+            let _scope = EnvScope::set(&root);
+
+            let img = make_test_image();
+            save_to_cache("roundtrip.png", &img);
+
+            let loaded = load_from_cache("roundtrip.png")
+                .expect("image written by save_to_cache should be loadable");
+            assert_eq!(loaded.width(), img.width());
+            assert_eq!(loaded.height(), img.height());
+            // PNG round-trip preserves RGBA bytes exactly.
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_save_to_cache_creates_directory_when_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("mkdir");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            save_to_cache("auto-mkdir.png", &make_test_image());
+
+            let dir = cache_dir().unwrap();
+            assert!(dir.exists(), "save_to_cache should create cache dir");
+            assert!(dir.join("auto-mkdir.png").exists());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        // Helper: build a single-thread runtime so we can drive async code
+        // from a sync test that owns the env lock for its full lifetime.
+        fn run_async<F: std::future::Future>(fut: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(fut)
+        }
+
+        #[test]
+        fn test_load_cached_or_download_returns_cached_without_network() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("cached");
+            let _scope = EnvScope::set(&root);
+
+            // Pre-populate the cache so the network branch is never reached.
+            let img = make_test_image();
+            save_to_cache("warm.png", &img);
+
+            // URL is intentionally bogus — must not be hit on a cache hit.
+            let loaded = run_async(load_cached_or_download(
+                "http://127.0.0.1:1/never",
+                "warm.png",
+            ))
+            .expect("cached image should be returned without download");
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_cached_or_download_uses_sanitized_key_lookup() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let root = unique_cache_root("sanitize");
+            let _scope = EnvScope::set(&root);
+
+            // Pre-populate using the sanitized form of the raw key.
+            let raw_key = "user/with spaces!.png";
+            let safe_key = "user_with_spaces_.png";
+            let img = make_test_image();
+            save_to_cache(safe_key, &img);
+
+            let loaded = run_async(load_cached_or_download("http://127.0.0.1:1/never", raw_key))
+                .expect("sanitized key should match the cached file");
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 }
