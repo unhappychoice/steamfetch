@@ -1032,5 +1032,27 @@ mod tests {
                 .expect_err("connection refused should fail");
             assert!(err.downcast_ref::<SteamApiError>().is_some());
         }
+
+        #[test]
+        fn test_request_with_retry_returns_timeout_when_server_hangs() {
+            // Bind a listener but never call accept(): the kernel completes
+            // each TCP handshake and queues the connection, so reqwest's
+            // send() proceeds past connect, then waits indefinitely for a
+            // response. With a 1s client timeout, this triggers the
+            // `Err(e) if e.is_timeout()` arm in request_with_retry, mapping
+            // to SteamApiError::Timeout (retryable).
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(1);
+            let err = run_async(client.request_with_retry(&url, "hang"))
+                .expect_err("hanging server should produce timeout error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::Timeout
+            ));
+            drop(listener);
+        }
     }
 }
