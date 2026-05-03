@@ -148,6 +148,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_serde_roundtrip_handles_nan_percent_as_json_null() {
+        // serde_json represents non-finite floats (NaN/Inf) as JSON null
+        // rather than failing. A cache entry containing rarest_percent =
+        // f64::NAN therefore serializes successfully, and the resulting
+        // null deserializes back into Option::None — proving that the
+        // pipeline survives non-finite floats end-to-end without touching
+        // the filesystem (so this test cannot race on XDG_CACHE_HOME like
+        // the fs_tests submodule does).
+        let mut cache = AchievementCache::default();
+        cache.set(99, 4242, 3, 7, Some(("Edge Float", f64::NAN)));
+
+        let json = serde_json::to_string(&cache).expect("NaN should serialize as JSON null");
+        assert!(
+            json.contains("\"rarest_percent\":null"),
+            "NaN should encode as JSON null, got: {json}",
+        );
+        assert!(
+            json.contains("\"rarest_name\":\"Edge Float\""),
+            "rarest_name should round-trip verbatim, got: {json}",
+        );
+
+        let restored: AchievementCache =
+            serde_json::from_str(&json).expect("round-trip should deserialize cleanly");
+        let entry = restored.get(99, 4242).expect("entry must persist");
+        assert_eq!(entry.achieved, 3);
+        assert_eq!(entry.total, 7);
+        assert_eq!(entry.rarest_name.as_deref(), Some("Edge Float"));
+        assert!(
+            entry.rarest_percent.is_none(),
+            "JSON null deserializes Option<f64> as None"
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_handles_infinite_percent_as_json_null() {
+        // f64::INFINITY follows the same JSON-null serialization rule as NaN.
+        // Verifies the same contract for the other non-finite float so the
+        // achievement-percent pipeline does not silently drop or panic on
+        // unusual values returned by the Steam API.
+        let mut cache = AchievementCache::default();
+        cache.set(7, 0, 0, 0, Some(("Inf Sentinel", f64::INFINITY)));
+
+        let json = serde_json::to_string(&cache).expect("Inf should serialize as JSON null");
+        assert!(json.contains("\"rarest_percent\":null"));
+
+        let restored: AchievementCache = serde_json::from_str(&json).unwrap();
+        let entry = restored.get(7, 0).expect("entry must persist");
+        assert_eq!(entry.rarest_name.as_deref(), Some("Inf Sentinel"));
+        assert!(entry.rarest_percent.is_none());
+    }
+
     #[cfg(target_os = "linux")]
     mod fs_tests {
         use super::super::*;
