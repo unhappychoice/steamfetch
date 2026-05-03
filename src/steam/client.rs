@@ -863,6 +863,34 @@ mod tests {
         assert!(data.games.is_empty());
     }
 
+    #[test]
+    fn test_fetch_owned_games_for_appids_enters_chunks_loop_with_non_empty_slice() {
+        // A non-empty appids slice produces one chunk, so the for-loop body
+        // is entered and `fetch_owned_games_filtered(Some(chunk))` is invoked
+        // — exercising the source line that the empty-slice test cannot
+        // reach (chunks(100) of [] yields nothing). The inner call targets
+        // BASE_URL and is therefore not reachable from a unit test, so we
+        // wrap the whole call in a tight `tokio::time::timeout` to abort
+        // before any real network handshake completes. The line counter for
+        // the loop-body statement increments as soon as the future starts
+        // evaluating that statement, which happens before the inner await
+        // yields — independently of whether the timeout or the request
+        // itself wins the race.
+        use std::time::Duration;
+        let client = SteamClient::new("k".into(), "id".into()).with_timeout(1);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt");
+        let _ = rt.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                client.fetch_owned_games_for_appids(&[1]),
+            )
+            .await
+        });
+    }
+
     mod request_with_retry_tests {
         use super::super::*;
         use std::io::{Read, Write};
