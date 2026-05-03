@@ -552,3 +552,384 @@ fn format_number(n: u32) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strip_ansi(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_format_number_zero() {
+        assert_eq!(format_number(0), "0");
+    }
+
+    #[test]
+    fn test_format_number_small() {
+        assert_eq!(format_number(7), "7");
+        assert_eq!(format_number(42), "42");
+        assert_eq!(format_number(999), "999");
+    }
+
+    #[test]
+    fn test_format_number_thousands() {
+        assert_eq!(format_number(1_000), "1,000");
+        assert_eq!(format_number(12_345), "12,345");
+        assert_eq!(format_number(999_999), "999,999");
+    }
+
+    #[test]
+    fn test_format_number_millions() {
+        assert_eq!(format_number(1_000_000), "1,000,000");
+        assert_eq!(format_number(1_234_567), "1,234,567");
+        assert_eq!(format_number(4_294_967_295), "4,294,967,295");
+    }
+
+    #[test]
+    fn test_format_playtime_minutes_only() {
+        assert_eq!(format_playtime(0), "0m");
+        assert_eq!(format_playtime(30), "30m");
+        assert_eq!(format_playtime(59), "59m");
+    }
+
+    #[test]
+    fn test_format_playtime_with_hours() {
+        assert_eq!(format_playtime(60), "1h 0m");
+        assert_eq!(format_playtime(90), "1h 30m");
+        assert_eq!(format_playtime(125), "2h 5m");
+        assert_eq!(format_playtime(3661), "61h 1m");
+    }
+
+    #[test]
+    fn test_truncate_shorter_than_max() {
+        let result = truncate("abc", 10);
+        assert_eq!(result.width(), 10);
+        assert!(result.starts_with("abc"));
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        let result = truncate("abcde", 5);
+        assert_eq!(result, "abcde");
+    }
+
+    #[test]
+    fn test_truncate_longer_than_max() {
+        let result = truncate("abcdefghij", 6);
+        assert_eq!(result.width(), 6);
+        assert!(result.contains("..."));
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        let result = truncate("", 5);
+        assert_eq!(result.width(), 5);
+    }
+
+    #[test]
+    fn test_truncate_unicode_wide_chars() {
+        // Each CJK char has width 2
+        let result = truncate("あいうえお", 4);
+        assert!(result.width() <= 4);
+    }
+
+    #[test]
+    fn test_logo_width_constant() {
+        assert_eq!(logo_width(), 35);
+    }
+
+    #[test]
+    fn test_build_logo_returns_18_lines() {
+        let lines = build_logo();
+        assert_eq!(lines.len(), 18);
+    }
+
+    #[test]
+    fn test_colorize_logo_line_wraps_with_ansi() {
+        let s = colorize_logo_line("hello");
+        assert!(s.contains("hello"));
+        assert!(s.contains("\x1b["));
+        assert!(s.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_games_title_lower_bound() {
+        let (label, _) = games_title(0);
+        assert_eq!(label, "Fledgling Spirit");
+    }
+
+    #[test]
+    fn test_games_title_buckets() {
+        assert_eq!(games_title(10).0, "Awakened Soul");
+        assert_eq!(games_title(20).0, "Wandering Phantom");
+        assert_eq!(games_title(40).0, "Shadow Initiate");
+        assert_eq!(games_title(60).0, "Void Walker");
+        assert_eq!(games_title(90).0, "Digital Specter");
+        assert_eq!(games_title(120).0, "Realm Collector");
+        assert_eq!(games_title(180).0, "Soul Harvester");
+        assert_eq!(games_title(250).0, "Chaos Bringer");
+        assert_eq!(games_title(350).0, "Dimension Hoarder");
+        assert_eq!(games_title(450).0, "Abyss Keeper");
+        assert_eq!(games_title(600).0, "Wallet Slayer");
+        assert_eq!(games_title(700).0, "Forbidden Archivist");
+        assert_eq!(games_title(900).0, "Eternal Curator");
+        assert_eq!(games_title(1100).0, "Void Emperor");
+        assert_eq!(games_title(1400).0, "Infinite Library");
+        assert_eq!(games_title(1700).0, "Reality Distorter");
+        assert_eq!(games_title(2500).0, "Steam Leviathan");
+        assert_eq!(games_title(4000).0, "Cosmic Devourer");
+        assert_eq!(games_title(99999).0, "GabeN's Chosen One");
+    }
+
+    #[test]
+    fn test_unplayed_title_buckets() {
+        assert_eq!(unplayed_title(0.0).0, "Actually Plays Games");
+        assert_eq!(unplayed_title(3.0).0, "Rare Specimen");
+        assert_eq!(unplayed_title(7.0).0, "Impressive Self-Control");
+        assert_eq!(unplayed_title(13.0).0, "Mostly Functional");
+        assert_eq!(unplayed_title(18.0).0, "Could Be Worse");
+        assert_eq!(unplayed_title(23.0).0, "Starting to Slip");
+        assert_eq!(unplayed_title(28.0).0, "I'll Play Tomorrow");
+        assert_eq!(unplayed_title(33.0).0, "Just One More Sale");
+        assert_eq!(unplayed_title(38.0).0, "Someday Maybe");
+        assert_eq!(unplayed_title(43.0).0, "Buying Is Playing");
+        assert_eq!(unplayed_title(48.0).0, "It Was On Sale OK");
+        assert_eq!(unplayed_title(53.0).0, "Send Help");
+        assert_eq!(unplayed_title(58.0).0, "My Wallet Weeps");
+        assert_eq!(unplayed_title(63.0).0, "Professional Dust Farmer");
+        assert_eq!(unplayed_title(68.0).0, "Why Am I Like This");
+        assert_eq!(unplayed_title(73.0).0, "Bundle Addiction");
+        assert_eq!(unplayed_title(78.0).0, "Gaming? What's That");
+        assert_eq!(unplayed_title(83.0).0, "Digital Landfill");
+        assert_eq!(unplayed_title(88.0).0, "Steam Sale Victim");
+        assert_eq!(unplayed_title(93.0).0, "Collecting Dust Pro");
+        assert_eq!(unplayed_title(99.0).0, "Why Do I Even Bother");
+    }
+
+    #[test]
+    fn test_playtime_title_buckets() {
+        assert_eq!(playtime_title(5).0, "Newborn Shadow");
+        assert_eq!(playtime_title(20).0, "Passing Specter");
+        assert_eq!(playtime_title(75).0, "Fleeting Presence");
+        assert_eq!(playtime_title(150).0, "Wandering Spirit");
+        assert_eq!(playtime_title(300).0, "Devoted Phantom");
+        assert_eq!(playtime_title(400).0, "Bound Soul");
+        assert_eq!(playtime_title(600).0, "Chained Existence");
+        assert_eq!(playtime_title(900).0, "Eternal Prisoner");
+        assert_eq!(playtime_title(1200).0, "Time Devourer");
+        assert_eq!(playtime_title(1700).0, "Reality Forsaker");
+        assert_eq!(playtime_title(2500).0, "Dimension Exile");
+        assert_eq!(playtime_title(3500).0, "Void Dweller");
+        assert_eq!(playtime_title(4500).0, "Sunlight Deserter");
+        assert_eq!(playtime_title(6000).0, "Nocturnal Overlord");
+        assert_eq!(playtime_title(8000).0, "Crimson Night King");
+        assert_eq!(playtime_title(12000).0, "Grass Myth Believer");
+        assert_eq!(playtime_title(17000).0, "Hermit of Eternity");
+        assert_eq!(playtime_title(25000).0, "Ascended Beyond");
+        assert_eq!(playtime_title(40000).0, "Timeless One");
+        assert_eq!(playtime_title(60000).0, "Chronos Incarnate");
+    }
+
+    #[test]
+    fn test_perfect_title_buckets() {
+        assert_eq!(perfect_title(0).0, "Unawakened");
+        assert_eq!(perfect_title(2).0, "First Blood");
+        assert_eq!(perfect_title(5).0, "Rising Hunter");
+        assert_eq!(perfect_title(10).0, "Soul Seeker");
+        assert_eq!(perfect_title(15).0, "Dark Pursuer");
+        assert_eq!(perfect_title(25).0, "Shadow Stalker");
+        assert_eq!(perfect_title(40).0, "Relentless Blade");
+        assert_eq!(perfect_title(50).0, "Trophy Reaper");
+        assert_eq!(perfect_title(70).0, "Glory Collector");
+        assert_eq!(perfect_title(90).0, "Perfection Seeker");
+        assert_eq!(perfect_title(120).0, "Flawless Executor");
+        assert_eq!(perfect_title(150).0, "Grandmaster of 100%");
+        assert_eq!(perfect_title(200).0, "Eternal Perfectionist");
+        assert_eq!(perfect_title(240).0, "Platinum Overlord");
+        assert_eq!(perfect_title(300).0, "Supreme Completionist");
+        assert_eq!(perfect_title(350).0, "Legendary Finisher");
+        assert_eq!(perfect_title(450).0, "Mythical Achiever");
+        assert_eq!(perfect_title(600).0, "Godslayer");
+        assert_eq!(perfect_title(700).0, "Beyond Perfection");
+        assert_eq!(perfect_title(1000).0, "Achievement Deity");
+    }
+
+    #[test]
+    fn test_steam_level_title_buckets() {
+        assert_eq!(steam_level_title(3).0, "Lurker");
+        assert_eq!(steam_level_title(8).0, "Novice");
+        assert_eq!(steam_level_title(13).0, "Apprentice");
+        assert_eq!(steam_level_title(18).0, "Regular");
+        assert_eq!(steam_level_title(23).0, "Established");
+        assert_eq!(steam_level_title(28).0, "Dedicated");
+        assert_eq!(steam_level_title(35).0, "Respected");
+        assert_eq!(steam_level_title(45).0, "Distinguished");
+        assert_eq!(steam_level_title(55).0, "Prestigious");
+        assert_eq!(steam_level_title(70).0, "Elite");
+        assert_eq!(steam_level_title(85).0, "Master");
+        assert_eq!(steam_level_title(95).0, "Grandmaster");
+        assert_eq!(steam_level_title(115).0, "Legend");
+        assert_eq!(steam_level_title(140).0, "Mythical");
+        assert_eq!(steam_level_title(180).0, "Immortal");
+        assert_eq!(steam_level_title(250).0, "Godlike");
+        assert_eq!(steam_level_title(400).0, "Ascended");
+        assert_eq!(steam_level_title(800).0, "Whale Supreme");
+        assert_eq!(steam_level_title(2000).0, "Touch Grass Please");
+    }
+
+    #[test]
+    fn test_account_age_title_buckets() {
+        assert_eq!(account_age_title(0).0, "Fresh Blood");
+        assert_eq!(account_age_title(1).0, "Newcomer");
+        assert_eq!(account_age_title(2).0, "Getting Hooked");
+        assert_eq!(account_age_title(5).0, "Veteran");
+        assert_eq!(account_age_title(10).0, "Decade Survivor");
+        assert_eq!(account_age_title(15).0, "Digital Dinosaur");
+        assert_eq!(account_age_title(18).0, "OG Steam User");
+        assert_eq!(account_age_title(19).0, "Founding Father");
+        assert_eq!(account_age_title(99).0, "Primordial Entity");
+    }
+
+    #[test]
+    fn test_achievement_title_buckets() {
+        assert_eq!(achievement_title(2.0).0, "Empty Vessel");
+        assert_eq!(achievement_title(8.0).0, "Dormant Power");
+        assert_eq!(achievement_title(13.0).0, "Stirring Darkness");
+        assert_eq!(achievement_title(18.0).0, "Awakening Force");
+        assert_eq!(achievement_title(23.0).0, "Rising Shadow");
+        assert_eq!(achievement_title(28.0).0, "Hungry Spirit");
+        assert_eq!(achievement_title(33.0).0, "Growing Ambition");
+        assert_eq!(achievement_title(38.0).0, "Burning Desire");
+        assert_eq!(achievement_title(43.0).0, "Unstoppable Will");
+        assert_eq!(achievement_title(48.0).0, "Half-Awakened");
+        assert_eq!(achievement_title(53.0).0, "Power Unleashed");
+        assert_eq!(achievement_title(58.0).0, "Chaos Rising");
+        assert_eq!(achievement_title(63.0).0, "Dark Dominator");
+        assert_eq!(achievement_title(68.0).0, "Realm Conqueror");
+        assert_eq!(achievement_title(73.0).0, "Relentless Force");
+        assert_eq!(achievement_title(78.0).0, "Apex Predator");
+        assert_eq!(achievement_title(83.0).0, "Obsidian Emperor");
+        assert_eq!(achievement_title(88.0).0, "Chaos Incarnate");
+        assert_eq!(achievement_title(93.0).0, "Near-Omniscient");
+        assert_eq!(achievement_title(98.0).0, "Edge of Infinity");
+        assert_eq!(achievement_title(100.0).0, "The Absolute One");
+    }
+
+    #[test]
+    fn test_gradient_text_preserves_chars() {
+        let result = gradient_text("hi", (255, 128, 64), true);
+        assert_eq!(strip_ansi(&result), "hi");
+    }
+
+    #[test]
+    fn test_gradient_text_empty_string() {
+        let result = gradient_text("", (100, 100, 100), false);
+        assert_eq!(strip_ansi(&result), "");
+        assert!(result.contains("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_gradient_text_reverse_starts_dimmer() {
+        let darken = gradient_text("X", (200, 200, 200), true);
+        let brighten = gradient_text("X", (200, 200, 200), false);
+        assert_ne!(darken, brighten);
+    }
+
+    #[test]
+    fn test_colorize_title_and_reverse_differ() {
+        let a = colorize_title("Test", (200, 100, 50));
+        let b = colorize_title_reverse("Test", (200, 100, 50));
+        assert_ne!(a, b);
+        assert_eq!(strip_ansi(&a), "Test");
+        assert_eq!(strip_ansi(&b), "Test");
+    }
+
+    #[test]
+    fn test_stat_line_formats_label_and_value() {
+        let line = stat_line("Games", "42", "Title".to_string());
+        let stripped = strip_ansi(&line);
+        assert!(stripped.contains("Games:"));
+        assert!(stripped.contains("42"));
+        assert!(stripped.contains("Title"));
+    }
+
+    #[test]
+    fn test_tree_lines_uses_branch_and_corner_prefix() {
+        let items = vec![
+            GameStat {
+                name: "First".to_string(),
+                playtime_minutes: 60,
+            },
+            GameStat {
+                name: "Second".to_string(),
+                playtime_minutes: 120,
+            },
+        ];
+        let times = vec!["1h".to_string(), "2h".to_string()];
+        let lines = tree_lines(&items, &times, 80);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("├─"));
+        assert!(lines[1].starts_with("└─"));
+        assert!(lines[0].contains("First"));
+        assert!(lines[1].contains("Second"));
+    }
+
+    #[test]
+    fn test_tree_lines_single_item_uses_corner() {
+        let items = vec![GameStat {
+            name: "Only".to_string(),
+            playtime_minutes: 30,
+        }];
+        let times = vec!["30m".to_string()];
+        let lines = tree_lines(&items, &times, 80);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("└─"));
+    }
+
+    #[test]
+    fn test_tree_lines_empty() {
+        let items: Vec<GameStat> = Vec::new();
+        let times: Vec<String> = Vec::new();
+        let lines = tree_lines(&items, &times, 80);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_tree_name_width_respects_min() {
+        let items = vec![GameStat {
+            name: "x".to_string(),
+            playtime_minutes: 0,
+        }];
+        let times = vec!["0m".to_string()];
+        // Even with very narrow inner_width, should not go below MIN_NAME_WIDTH (8)
+        let width = tree_name_width(&items, &times, 1);
+        assert_eq!(width, MIN_NAME_WIDTH);
+    }
+
+    #[test]
+    fn test_tree_name_width_caps_at_max_name() {
+        let long_name = "A".repeat(40);
+        let items = vec![GameStat {
+            name: long_name.clone(),
+            playtime_minutes: 0,
+        }];
+        let times = vec!["0m".to_string()];
+        let width = tree_name_width(&items, &times, 200);
+        assert_eq!(width, long_name.width());
+    }
+}
