@@ -445,6 +445,91 @@ mod tests {
         cursor_right(5);
     }
 
+    mod print_tests {
+        use super::super::*;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+
+        fn make_test_image(w: u32, h: u32) -> DynamicImage {
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let r = ((x * 255) / w.max(1)) as u8;
+                    let g = ((y * 255) / h.max(1)) as u8;
+                    buf.put_pixel(x, y, Rgba([r, g, 128, 255]));
+                }
+            }
+            DynamicImage::ImageRgba8(buf)
+        }
+
+        #[test]
+        fn test_print_block_returns_term_rows_for_even_height() {
+            // 4 wide, 4 tall image scaled to 4 cols → scaled_h = 4 → ceil(4/2) = 2 rows.
+            let img = make_test_image(4, 4);
+            let rows = print_block(&img, 4).expect("print_block should succeed");
+            assert_eq!(rows, 2);
+        }
+
+        #[test]
+        fn test_print_block_rounds_odd_height_up() {
+            // 4 wide, 3 tall image at 2 cols → scale 0.5, scaled_h = 1, ceil(1/2) = 1.
+            let img = make_test_image(4, 3);
+            let rows = print_block(&img, 2).expect("print_block should succeed");
+            assert_eq!(rows, 1);
+        }
+
+        #[test]
+        fn test_print_kitty_chunked_encoding_does_not_panic() {
+            // Use a buffer larger than a single Kitty chunk so the multi-chunk
+            // branch (the `else` arm in the chunk loop) is exercised.
+            let w = 64u32;
+            let h = 64u32;
+            let rgba = vec![123u8; (w * h * 4) as usize];
+            print_kitty(&rgba, w, h).expect("print_kitty should succeed");
+        }
+
+        #[test]
+        fn test_print_kitty_single_chunk_does_not_panic() {
+            // Tiny buffer: one chunk total → first-chunk branch only.
+            let rgba = vec![0u8; 4 * 4 * 4];
+            print_kitty(&rgba, 4, 4).expect("print_kitty should succeed");
+        }
+
+        #[test]
+        fn test_print_iterm_writes_inline_png() {
+            let img = make_test_image(4, 4);
+            print_iterm(&img, 4, 4).expect("print_iterm should succeed");
+        }
+
+        #[test]
+        fn test_print_sixel_encodes_small_image() {
+            let w = 4usize;
+            let h = 4usize;
+            let rgba = vec![200u8; w * h * 4];
+            print_sixel(&rgba, w, h).expect("print_sixel should succeed");
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_kitty_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Kitty, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_iterm_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Iterm, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_sixel_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+    }
+
     mod env_tests {
         use super::super::*;
         use std::env;
