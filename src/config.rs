@@ -186,3 +186,167 @@ fn default_config_path() -> Option<PathBuf> {
 pub fn config_path() -> Option<PathBuf> {
     default_config_path()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        env::temp_dir().join(format!(
+            "steamfetch-test-{}-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos,
+            n
+        ))
+    }
+
+    #[test]
+    fn test_display_config_default_values() {
+        let d = DisplayConfig::default();
+        assert_eq!(d.show_top_games, 5);
+        assert!(d.show_recently_played);
+        assert!(d.show_achievements);
+        assert!(d.show_rarest);
+    }
+
+    #[test]
+    fn test_default_helpers() {
+        assert_eq!(default_top_games(), 5);
+        assert!(default_true());
+    }
+
+    #[test]
+    fn test_config_file_parses_empty_to_defaults() {
+        let parsed: ConfigFile = toml::from_str("").expect("empty toml should parse");
+        assert!(parsed.api.steam_api_key.is_none());
+        assert!(parsed.api.steam_id.is_none());
+        assert_eq!(parsed.display.show_top_games, 5);
+        assert!(parsed.display.show_recently_played);
+    }
+
+    #[test]
+    fn test_config_file_parses_api_section() {
+        let toml_str = r#"
+[api]
+steam_api_key = "abc123"
+steam_id = "76561197960265728"
+"#;
+        let parsed: ConfigFile = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(parsed.api.steam_api_key.as_deref(), Some("abc123"));
+        assert_eq!(parsed.api.steam_id.as_deref(), Some("76561197960265728"));
+        assert_eq!(parsed.display.show_top_games, 5);
+    }
+
+    #[test]
+    fn test_config_file_parses_display_overrides() {
+        let toml_str = r#"
+[display]
+show_top_games = 10
+show_recently_played = false
+show_achievements = false
+show_rarest = false
+"#;
+        let parsed: ConfigFile = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(parsed.display.show_top_games, 10);
+        assert!(!parsed.display.show_recently_played);
+        assert!(!parsed.display.show_achievements);
+        assert!(!parsed.display.show_rarest);
+    }
+
+    #[test]
+    fn test_config_file_partial_display_keeps_other_defaults() {
+        let toml_str = r#"
+[display]
+show_top_games = 3
+"#;
+        let parsed: ConfigFile = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(parsed.display.show_top_games, 3);
+        assert!(parsed.display.show_recently_played);
+        assert!(parsed.display.show_achievements);
+        assert!(parsed.display.show_rarest);
+    }
+
+    #[test]
+    fn test_load_config_file_reads_existing_toml() {
+        let path = unique_temp_path("read");
+        fs::write(
+            &path,
+            r#"
+[api]
+steam_api_key = "from-file"
+
+[display]
+show_top_games = 7
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_config_file(Some(path.clone())).expect("load should succeed");
+        assert_eq!(cfg.api.steam_api_key.as_deref(), Some("from-file"));
+        assert_eq!(cfg.display.show_top_games, 7);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_config_file_creates_default_when_missing() {
+        let dir = unique_temp_path("missing-dir");
+        let path = dir.join("config.toml");
+        assert!(!path.exists());
+
+        let cfg = load_config_file(Some(path.clone())).expect("load should succeed");
+        assert!(path.exists(), "default config file should be written");
+        assert!(cfg.api.steam_api_key.is_none());
+        assert_eq!(cfg.display.show_top_games, 5);
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[api]"));
+        assert!(written.contains("[display]"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_load_config_file_invalid_toml_errors() {
+        let path = unique_temp_path("invalid");
+        fs::write(&path, "this is = not [valid toml").unwrap();
+
+        let err = load_config_file(Some(path.clone())).expect_err("invalid toml should error");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected parse-failure context, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_create_default_config_writes_file_and_directory() {
+        let dir = unique_temp_path("create-dir");
+        let path = dir.join("nested").join("config.toml");
+        assert!(!dir.exists());
+
+        create_default_config(&path).expect("should create default config");
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("steamfetch configuration file"));
+        assert!(content.contains("show_top_games"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().unwrap());
+        let _ = fs::remove_dir(&dir);
+    }
+}
