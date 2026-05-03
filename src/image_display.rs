@@ -431,4 +431,182 @@ mod tests {
             assert!(dir.ends_with("steamfetch/images"));
         }
     }
+
+    #[test]
+    fn test_cursor_right_zero_is_noop() {
+        // The zero branch returns without writing any escape sequence.
+        // We can't capture stdout here, but the call must not panic.
+        cursor_right(0);
+    }
+
+    #[test]
+    fn test_cursor_right_nonzero_does_not_panic() {
+        // Exercises the formatted-write branch.
+        cursor_right(5);
+    }
+
+    mod env_tests {
+        use super::super::*;
+        use std::env;
+        use std::sync::Mutex;
+
+        // Serialize env mutations across this submodule; the tests would
+        // otherwise race on shared environment state.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        const PROTOCOL_VARS: &[&str] = &[
+            "KITTY_WINDOW_ID",
+            "ITERM_SESSION_ID",
+            "WT_SESSION",
+            "TERM_PROGRAM",
+            "LC_TERMINAL",
+            "XTERM_VERSION",
+        ];
+
+        struct EnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl EnvScope {
+            fn clear_all() -> Self {
+                let saved = PROTOCOL_VARS
+                    .iter()
+                    .map(|&k| {
+                        let prev = env::var(k).ok();
+                        env::remove_var(k);
+                        (k, prev)
+                    })
+                    .collect();
+                Self { saved }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                for (k, v) in &self.saved {
+                    match v {
+                        Some(val) => env::set_var(k, val),
+                        None => env::remove_var(k),
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_returns_false_when_no_env_set() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_wt_session() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("WT_SESSION", "1");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_known_term_program() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            for prog in ["WezTerm", "foot", "mlterm", "contour", "Black Box"] {
+                let _scope = EnvScope::clear_all();
+                env::set_var("TERM_PROGRAM", prog);
+                assert!(
+                    is_sixel_capable_terminal(),
+                    "TERM_PROGRAM={} should be sixel-capable",
+                    prog
+                );
+            }
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_unknown_term_program_is_false() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("TERM_PROGRAM", "Apple_Terminal");
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_lc_terminal_iterm2() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("LC_TERMINAL", "iTerm2");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_lc_terminal_other_is_false() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("LC_TERMINAL", "something-else");
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_xterm_version() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("XTERM_VERSION", "XTerm(370)");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_detect_protocol_prefers_kitty() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("KITTY_WINDOW_ID", "42");
+            // Even with iterm/sixel hints set, kitty wins.
+            env::set_var("ITERM_SESSION_ID", "xx");
+            env::set_var("WT_SESSION", "1");
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Kitty));
+        }
+
+        #[test]
+        fn test_detect_protocol_iterm_when_no_kitty() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("ITERM_SESSION_ID", "abc");
+            env::set_var("WT_SESSION", "1"); // sixel hint should not override
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Iterm));
+        }
+
+        #[test]
+        fn test_detect_protocol_sixel_when_only_sixel_hint() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("WT_SESSION", "1");
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Sixel));
+        }
+
+        #[test]
+        fn test_detect_protocol_falls_back_to_block() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Block));
+        }
+
+        #[test]
+        fn test_resolve_protocol_auto_uses_detect() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            env::set_var("KITTY_WINDOW_ID", "1");
+            assert!(matches!(
+                resolve_protocol(&ImageProtocol::Auto),
+                ResolvedProtocol::Kitty
+            ));
+        }
+
+        #[test]
+        fn test_resolve_protocol_auto_falls_back_to_block() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _scope = EnvScope::clear_all();
+            assert!(matches!(
+                resolve_protocol(&ImageProtocol::Auto),
+                ResolvedProtocol::Block
+            ));
+        }
+    }
 }
