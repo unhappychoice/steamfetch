@@ -1393,6 +1393,46 @@ mod tests {
                     true
                 });
             }
+
+            #[test]
+            fn test_fetch_achievement_stats_rarest_tie_breaks_on_game_then_name() {
+                // Two cached rarest achievements that tie on `percent` AND on
+                // `game` so the `min_by` comparator's primary `partial_cmp`
+                // returns `Equal`, the first `then_with(a.game.cmp(&b.game))`
+                // also returns `Equal`, and the second
+                // `then_with(a.name.cmp(&b.name))` is the one that finally
+                // breaks the tie. Exercises both `.then_with` arms (lines
+                // 390–391) — the existing aggregation test only differs on
+                // percent and never reaches them.
+                run_with_pinned_cache("rarest-ties", |_root| {
+                    let mut cache = AchievementCache::default();
+                    // Same percent, same game name (assigned via the games
+                    // vec below), different achievement names. The lex-smaller
+                    // achievement name ("Alpha") must win the tie-break.
+                    cache.set(101, 1111, 1, 10, Some(("Beta", 7.5)));
+                    cache.set(102, 1111, 1, 10, Some(("Alpha", 7.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 2,
+                        games: vec![
+                            make_game(101, Some("Shared Title"), 1111),
+                            make_game(102, Some("Shared Title"), 1111),
+                        ],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    let rarest = stats.rarest.expect("two tied candidates -> Some");
+                    assert_eq!(rarest.name, "Alpha");
+                    assert_eq!(rarest.game, "Shared Title");
+                    assert!((rarest.percent - 7.5).abs() < f64::EPSILON);
+                    true
+                });
+            }
         }
     }
 }
