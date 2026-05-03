@@ -811,4 +811,17 @@ mod tests {
         let _ = build_http_client(Duration::from_secs(1));
         let _ = build_http_client(Duration::from_secs(120));
     }
+
+    #[test]
+    fn test_print_status_does_not_panic() {
+        // Writes a CR + clear-line escape + message to stderr; the
+        // assertion is simply that it completes without panicking.
+        print_status("hello");
+        print_status("");
+    }
+
+    #[test]
+    fn test_clear_status_does_not_panic() {
+        clear_status();
+    }
 }

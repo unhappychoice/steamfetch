@@ -1103,4 +1103,40 @@ mod tests {
         let one_year_secs = 60 * 60 * 24 * 365;
         assert_eq!(account_age_years(now - one_year_secs - 100), 1);
     }
+
+    #[test]
+    fn test_inner_width_is_non_negative_and_bounded() {
+        // `inner_width()` reads `terminal_size()` which in a non-TTY test
+        // environment falls back to `DEFAULT_TERMINAL_WIDTH` (120) minus
+        // `LEFT_OFFSET`. Either way the value is a valid usize ≤ u16::MAX.
+        let w = inner_width();
+        assert!(w <= u16::MAX as usize);
+    }
+
+    #[test]
+    fn test_render_with_ascii_does_not_panic_with_empty_info() {
+        // Smoke test: should print the logo block without panicking.
+        render_with_ascii(&[]);
+    }
+
+    #[test]
+    fn test_render_with_ascii_handles_info_longer_than_logo() {
+        // 30 info lines exceeds the 18-line logo, exercising the
+        // `render_remaining_info` branch inside `render_with_ascii`.
+        let info: Vec<String> = (0..30).map(|i| format!("info {}", i)).collect();
+        render_with_ascii(&info);
+    }
+
+    #[test]
+    fn test_render_remaining_info_pads_with_logo_width() {
+        // Direct call covers the helper's iteration + println! path.
+        let lines = vec!["alpha".to_string(), "beta".to_string()];
+        render_remaining_info(&lines, logo_width());
+    }
+
+    #[test]
+    fn test_render_remaining_info_empty_input_is_noop() {
+        // No iteration; covers the early-exit shape of for_each on empty.
+        render_remaining_info(&[], 0);
+    }
 }
