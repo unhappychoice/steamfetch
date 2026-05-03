@@ -365,3 +365,70 @@ fn save_to_cache(key: &str, img: &DynamicImage) {
     let _ = img.write_to(&mut buf, image::ImageFormat::Png);
     let _ = fs::write(path, buf.into_inner());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_alphanumeric() {
+        assert_eq!(sanitize_cache_key("abcDEF123"), "abcDEF123");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_allowed_punctuation() {
+        assert_eq!(sanitize_cache_key("file_name-1.png"), "file_name-1.png");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_replaces_path_separators() {
+        assert_eq!(sanitize_cache_key("a/b\\c"), "a_b_c");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_replaces_spaces_and_specials() {
+        assert_eq!(sanitize_cache_key("hello world!?:*"), "hello_world____",);
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_empty_string() {
+        assert_eq!(sanitize_cache_key(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_unicode_alphanumeric() {
+        // Japanese characters are alphanumeric per Rust's char::is_alphanumeric
+        assert_eq!(sanitize_cache_key("テスト_1"), "テスト_1");
+    }
+
+    #[test]
+    fn test_resolve_protocol_kitty() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Kitty),
+            ResolvedProtocol::Kitty
+        ));
+    }
+
+    #[test]
+    fn test_resolve_protocol_iterm() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Iterm),
+            ResolvedProtocol::Iterm
+        ));
+    }
+
+    #[test]
+    fn test_resolve_protocol_sixel() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Sixel),
+            ResolvedProtocol::Sixel
+        ));
+    }
+
+    #[test]
+    fn test_cache_dir_is_under_steamfetch_images() {
+        if let Some(dir) = cache_dir() {
+            assert!(dir.ends_with("steamfetch/images"));
+        }
+    }
+}
