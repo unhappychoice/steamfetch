@@ -234,6 +234,40 @@ mod tests {
         }
 
         #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            // Sibling tests start with XDG_CACHE_HOME unset, so EnvScope::Drop
+            // only ever runs its `None => env::remove_var(...)` arm. Pre-set
+            // the variable before constructing an EnvScope so prev = Some(v),
+            // forcing the `Some(v) => env::set_var(...)` arm on Drop.
+            let _guard = ENV_LOCK.lock().unwrap();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            // Drop ran the `Some(v) => env::set_var(...)` arm, restoring
+            // the sentinel value rather than removing the variable.
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+
+        #[test]
         fn test_save_then_load_roundtrip_persists_entries() {
             let _guard = ENV_LOCK.lock().unwrap();
             let root = unique_cache_root("rt");
