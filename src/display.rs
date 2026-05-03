@@ -1139,4 +1139,29 @@ mod tests {
         // No iteration; covers the early-exit shape of for_each on empty.
         render_remaining_info(&[], 0);
     }
+
+    #[tokio::test]
+    async fn test_render_with_image_disabled_uses_ascii_path() {
+        // image_config.enabled=false short-circuits to render_with_ascii,
+        // exercising the public `render` wrapper plus the false branch.
+        let stats = make_minimal_stats();
+        let config = ImageConfig {
+            enabled: false,
+            protocol: ImageProtocol::Auto,
+        };
+        render(&stats, &config).await;
+    }
+
+    #[tokio::test]
+    async fn test_render_with_image_enabled_but_no_avatar_url_falls_back_to_ascii() {
+        // avatar_url=None makes render_with_image take the early-return
+        // branch back into render_with_ascii without touching the network.
+        let mut stats = make_minimal_stats();
+        stats.avatar_url = None;
+        let config = ImageConfig {
+            enabled: true,
+            protocol: ImageProtocol::Auto,
+        };
+        render(&stats, &config).await;
+    }
 }
