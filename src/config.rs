@@ -349,4 +349,220 @@ show_top_games = 7
         let _ = fs::remove_dir(path.parent().unwrap());
         let _ = fs::remove_dir(&dir);
     }
+
+    #[test]
+    fn test_config_path_shape_when_available() {
+        // `dirs::config_dir()` may return None on exotic platforms; only
+        // assert when Some (mirrors the cache_path test pattern).
+        if let Some(path) = config_path() {
+            assert!(path.ends_with("steamfetch/config.toml"));
+        }
+    }
+
+    mod env_tests {
+        use super::super::*;
+        use std::env;
+        use std::fs;
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // STEAM_API_KEY and STEAM_ID are process-wide; serialize mutations
+        // across this submodule so parallel test threads don't race.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        fn unique_path(label: &str) -> std::path::PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-cfg-env-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        struct EnvScope {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn save(key: &'static str) -> Self {
+                let prev = env::var(key).ok();
+                env::remove_var(key);
+                Self { key, prev }
+            }
+
+            fn set(key: &'static str, value: &str) -> Self {
+                let prev = env::var(key).ok();
+                env::set_var(key, value);
+                Self { key, prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var(self.key, v),
+                    None => env::remove_var(self.key),
+                }
+            }
+        }
+
+        #[test]
+        fn test_load_prefers_env_vars_over_config_file() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::set("STEAM_API_KEY", "env-key");
+            let _sid = EnvScope::set("STEAM_ID", "env-sid");
+
+            let path = unique_path("env-wins");
+            fs::write(
+                &path,
+                r#"
+[api]
+steam_api_key = "file-key"
+steam_id = "file-sid"
+"#,
+            )
+            .unwrap();
+
+            let cfg = Config::load(Some(path.clone())).expect("load should succeed");
+            assert_eq!(cfg.api_key, "env-key");
+            assert_eq!(cfg.steam_id, "env-sid");
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_falls_back_to_config_file_when_env_unset() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::save("STEAM_API_KEY");
+            let _sid = EnvScope::save("STEAM_ID");
+
+            let path = unique_path("file-wins");
+            fs::write(
+                &path,
+                r#"
+[api]
+steam_api_key = "file-key"
+steam_id = "file-sid"
+"#,
+            )
+            .unwrap();
+
+            let cfg = Config::load(Some(path.clone())).expect("load should succeed");
+            assert_eq!(cfg.api_key, "file-key");
+            assert_eq!(cfg.steam_id, "file-sid");
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_errors_with_help_when_api_key_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::save("STEAM_API_KEY");
+            let _sid = EnvScope::set("STEAM_ID", "env-sid");
+
+            let path = unique_path("no-api-key");
+            fs::write(&path, "").unwrap();
+
+            let err = Config::load(Some(path.clone()))
+                .err()
+                .expect("missing api key should error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("STEAM_API_KEY not set"),
+                "expected api-key help, got: {}",
+                msg
+            );
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_errors_with_help_when_steam_id_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::set("STEAM_API_KEY", "env-key");
+            let _sid = EnvScope::save("STEAM_ID");
+
+            let path = unique_path("no-sid");
+            fs::write(&path, "").unwrap();
+
+            let err = Config::load(Some(path.clone()))
+                .err()
+                .expect("missing steam id should error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("STEAM_ID not set"),
+                "expected steam-id help, got: {}",
+                msg
+            );
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_api_key_only_prefers_env() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::set("STEAM_API_KEY", "env-key");
+
+            let path = unique_path("api-env");
+            fs::write(
+                &path,
+                r#"
+[api]
+steam_api_key = "file-key"
+"#,
+            )
+            .unwrap();
+
+            let key = Config::load_api_key_only(Some(path.clone())).expect("should succeed");
+            assert_eq!(key, "env-key");
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_api_key_only_falls_back_to_file() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::save("STEAM_API_KEY");
+
+            let path = unique_path("api-file");
+            fs::write(
+                &path,
+                r#"
+[api]
+steam_api_key = "file-key"
+"#,
+            )
+            .unwrap();
+
+            let key = Config::load_api_key_only(Some(path.clone())).expect("should succeed");
+            assert_eq!(key, "file-key");
+
+            let _ = fs::remove_file(&path);
+        }
+
+        #[test]
+        fn test_load_api_key_only_errors_when_missing() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let _api = EnvScope::save("STEAM_API_KEY");
+
+            let path = unique_path("api-missing");
+            fs::write(&path, "").unwrap();
+
+            let err = Config::load_api_key_only(Some(path.clone()))
+                .expect_err("missing api key should error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("STEAM_API_KEY not set"),
+                "expected api-key help, got: {}",
+                msg
+            );
+
+            let _ = fs::remove_file(&path);
+        }
+    }
 }
