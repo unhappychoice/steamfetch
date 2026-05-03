@@ -824,4 +824,42 @@ mod tests {
     fn test_clear_status_does_not_panic() {
         clear_status();
     }
+
+    #[test]
+    fn test_detect_api_error_forbidden_with_verbose_true_logs_and_returns_invalid_key() {
+        // Exercises the `if verbose { eprintln!(...) }` branch inside the
+        // Forbidden/Access-is-denied arm — previously only the verbose=false
+        // path was covered.
+        let body = r#"{"error":"Forbidden"}"#;
+        let err = detect_api_error(body, true).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_access_denied_with_verbose_true() {
+        // Same verbose branch via the alternative trigger string.
+        let body = "<html>Access is denied</html>";
+        let err = detect_api_error(body, true).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_owned_games_for_appids_empty_returns_empty_data() {
+        // Empty appids slice — the chunks(100) iterator yields nothing,
+        // so no HTTP request is dispatched. Exercises the function entry,
+        // the empty loop, and the final OwnedGamesData construction.
+        let client = SteamClient::new("k".into(), "id".into());
+        let data = client
+            .fetch_owned_games_for_appids(&[])
+            .await
+            .expect("empty input should not error");
+        assert_eq!(data.game_count, 0);
+        assert!(data.games.is_empty());
+    }
 }
