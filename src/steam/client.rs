@@ -862,4 +862,175 @@ mod tests {
         assert_eq!(data.game_count, 0);
         assert!(data.games.is_empty());
     }
+
+    mod request_with_retry_tests {
+        use super::super::*;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(f)
+        }
+
+        // Bind to a random port, capture it, then drop the listener.
+        // Guarantees nothing is listening on the returned URL so reqwest
+        // fails fast with a connection error rather than timing out.
+        fn unbound_localhost_url() -> String {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local_addr").port();
+            drop(listener);
+            format!("http://127.0.0.1:{}/", port)
+        }
+
+        // Spin up a TCP server that responds to `n` consecutive requests
+        // with the same status/body, then exits.
+        fn spawn_n_shot_server(
+            n: usize,
+            status: u16,
+            reason: &'static str,
+            body: &'static [u8],
+        ) -> (String, std::thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                for _ in 0..n {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        return;
+                    };
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        status,
+                        reason,
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(body);
+                    let _ = stream.flush();
+                }
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_on_200_success() {
+            let (url, server) = spawn_n_shot_server(1, 200, "OK", b"hello-body");
+            let client = SteamClient::new("k".into(), "id".into());
+            let body = run_async(client.request_with_retry(&url, "test"))
+                .expect("200 response should succeed");
+            assert_eq!(body, "hello-body");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_on_200_when_verbose() {
+            // Same success path but with verbose=true to exercise the
+            // [verbose] status / response body log branches.
+            let (url, server) = spawn_n_shot_server(1, 200, "OK", b"verbose-success");
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let body = run_async(client.request_with_retry(&url, "verbose"))
+                .expect("200 response should succeed");
+            assert_eq!(body, "verbose-success");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_invalid_api_key_on_403() {
+            // 403 maps to InvalidApiKey via classify_http_error, which is
+            // non-retryable, so only one request is made.
+            let (url, server) = spawn_n_shot_server(1, 403, "Forbidden", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "test"))
+                .expect_err("403 should produce an error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::InvalidApiKey
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_api_error_on_400_with_body() {
+            // 400 maps via classify_http_error's catch-all arm, which reads
+            // the response body into ApiError.message. Non-retryable.
+            let (url, server) = spawn_n_shot_server(1, 400, "Bad Request", b"bad-input");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "test"))
+                .expect_err("400 should produce an error");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 400);
+                    assert_eq!(message, "bad-input");
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_429() {
+            // 429 → RateLimited (retryable). All 3 attempts fail, so the
+            // loop completes and the last error is returned.
+            let (url, server) = spawn_n_shot_server(3, 429, "Too Many Requests", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "rate"))
+                .expect_err("429 retries should still fail");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::RateLimited
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_500() {
+            // 500 → ApiError (status 5xx is retryable). Three attempts.
+            let (url, server) =
+                spawn_n_shot_server(3, 500, "Internal Server Error", b"server-oops");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "srv"))
+                .expect_err("500 retries should still fail");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 500);
+                    assert_eq!(message, "server-oops");
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_connection_refused() {
+            // No listener at the URL → reqwest send() returns Err that is
+            // not is_timeout(), mapping to NetworkError (retryable).
+            let url = unbound_localhost_url();
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "net"))
+                .expect_err("connection refused should fail");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::NetworkError(_)
+            ));
+        }
+
+        #[test]
+        fn test_request_with_retry_logs_backoff_when_verbose() {
+            // verbose=true + retryable error exercises the backoff and
+            // request-failed [verbose] log branches inside the retry loop.
+            let url = unbound_localhost_url();
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let err = run_async(client.request_with_retry(&url, "verbose-net"))
+                .expect_err("connection refused should fail");
+            assert!(err.downcast_ref::<SteamApiError>().is_some());
+        }
+    }
 }
