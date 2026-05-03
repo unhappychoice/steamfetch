@@ -331,4 +331,71 @@ mod tests {
         let appids = parse_games_xml(xml);
         assert_eq!(appids, vec![220, 240, 480]);
     }
+
+    #[test]
+    fn test_parse_games_xml_empty_string_returns_empty() {
+        assert!(parse_games_xml("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_no_game_tags_returns_empty() {
+        let xml = r#"<?xml version="1.0"?><root><other>123</other></root>"#;
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_skips_invalid_appid_content() {
+        let xml = r#"<games><game>not_a_number</game><game>440</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![440]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_handles_negative_number_as_invalid() {
+        // u32 cannot parse negative; the entry is dropped.
+        let xml = r#"<games><game>-7</game><game>730</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![730]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_trims_whitespace_in_content() {
+        let xml = "<games><game>  570  </game></games>";
+        assert_eq!(parse_games_xml(xml), vec![570]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_handles_attribute_only_tag() {
+        let xml = r#"<games><game id="1">10</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![10]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_unclosed_game_tag_is_skipped() {
+        // No closing </game> after the opening tag — falls through to
+        // the `current_pos = abs_start + 1` recovery branch and finds nothing else.
+        let xml = "<games><game>123";
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_open_tag_without_closing_bracket_is_skipped() {
+        // "<game" appears but there's no '>' anywhere — the inner
+        // `xml[abs_start..].find('>')` returns None, recovery advances by 1.
+        let xml = "prefix <game and then nothing";
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_multiple_games_wrappers_handled() {
+        // Two `<games>` wrappers in sequence should both be skipped
+        // without producing spurious entries.
+        let xml = "<games></games><games><game>100</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![100]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_overflow_u32_is_skipped() {
+        // Larger than u32::MAX — parse fails, entry skipped.
+        let xml = "<games><game>9999999999999</game><game>20</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![20]);
+    }
 }
