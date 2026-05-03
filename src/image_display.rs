@@ -1002,6 +1002,44 @@ mod tests {
             let _ = server.join();
         }
 
+        #[test]
+        fn test_download_image_returns_none_when_body_read_fails() {
+            // Server promises Content-Length: 100 in a 200 OK response, then
+            // closes the connection before sending any body bytes. reqwest's
+            // `.send().await` succeeds (headers parsed cleanly), but
+            // `.bytes().await` fails on the truncated payload — exercising the
+            // second `.ok()?` on line 346 of `download_image`. The other
+            // download_image tests reach either the `.send()` failure path
+            // (connection refused) or the `image::load_from_memory` failure
+            // path (non-image bytes), so this is the remaining `.ok()?` arm.
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/truncated.png", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    // Promise 100 bytes in the body but deliver none. The
+                    // `Connection: close` header tells the client that the
+                    // stream end is the body end, so the missing bytes
+                    // surface as a partial-response error rather than a hang.
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    // Drop the stream → FIN reaches the client mid-body.
+                }
+            });
+
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+            let _ = server.join();
+        }
+
         // Encodes a tiny image as PNG bytes for use as a mock HTTP response.
         fn png_bytes(img: &DynamicImage) -> Vec<u8> {
             let mut buf = std::io::Cursor::new(Vec::new());
