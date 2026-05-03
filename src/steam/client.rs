@@ -1033,6 +1033,71 @@ mod tests {
             assert!(err.downcast_ref::<SteamApiError>().is_some());
         }
 
+        // Spin up a TCP server that responds to consecutive requests using
+        // the supplied (status, reason, body) sequence. After the sequence is
+        // exhausted the server thread exits.
+        fn spawn_sequential_server(
+            sequence: Vec<(u16, &'static str, &'static [u8])>,
+        ) -> (String, std::thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                for (status, reason, body) in sequence {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        return;
+                    };
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        status,
+                        reason,
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(body);
+                    let _ = stream.flush();
+                }
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_after_retryable_failure() {
+            // First attempt: 500 (retryable) → loop sets last_error, sleeps a
+            // backoff, then second attempt returns 200. Exercises the
+            // retry-then-success path: the `attempt > 0` backoff branch and a
+            // successful body return after a previous failure was recorded.
+            let (url, server) = spawn_sequential_server(vec![
+                (500, "Internal Server Error", b"transient"),
+                (200, "OK", b"recovered-body"),
+            ]);
+            let client = SteamClient::new("k".into(), "id".into());
+            let body = run_async(client.request_with_retry(&url, "retry-success"))
+                .expect("retry should succeed on second attempt");
+            assert_eq!(body, "recovered-body");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_succeeds_after_retry_when_verbose() {
+            // Same retry-then-success flow with verbose=true — exercises the
+            // verbose backoff log AND the verbose status / body log on the
+            // successful retry attempt within the same call.
+            let (url, server) = spawn_sequential_server(vec![
+                (429, "Too Many Requests", b""),
+                (200, "OK", b"verbose-recovered"),
+            ]);
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let body = run_async(client.request_with_retry(&url, "verbose-retry"))
+                .expect("retry should succeed on second attempt");
+            assert_eq!(body, "verbose-recovered");
+            let _ = server.join();
+        }
+
         #[test]
         fn test_request_with_retry_returns_timeout_when_server_hangs() {
             // Bind a listener but never call accept(): the kernel completes
