@@ -699,4 +699,30 @@ steam_api_key = "file-key"
 
         let _ = fs::remove_dir(&dir);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_config_file_propagates_create_default_failure() {
+        // The supplied path doesn't exist (so we enter the `Some(p) =>` arm
+        // that calls `create_default_config(&p)?`), but its parent directory
+        // is a regular file — `create_dir_all` fails inside
+        // `create_default_config`, and the `?` on line 136 propagates that
+        // error out of `load_config_file`. The other `Some(p) =>` test only
+        // covers the success path of the same `?`.
+        let blocker = unique_temp_path("create-fail-blocker");
+        fs::write(&blocker, "not a directory").unwrap();
+        let path = blocker.join("nested").join("config.toml");
+        assert!(!path.exists());
+
+        let err = load_config_file(Some(path))
+            .expect_err("create_default_config failure should propagate");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to create config directory"),
+            "expected create-dir context to surface via load_config_file, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_file(&blocker);
+    }
 }
