@@ -305,6 +305,84 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_fetch_stats_routes_to_web_stats_when_native_unavailable() {
+        // On this Linux test environment the user's real $HOME may have a
+        // Steam install at ~/.steam/sdk64/steamclient.so, so calling
+        // `fetch_stats` without scoping $HOME could load real steamclient.so
+        // and reach Steam SDK code. Point $HOME at an empty temp directory:
+        // `NativeSteamClient::try_new` then matches the
+        // `None => fetch_web_stats(cli).await` arm of `fetch_stats`. Pair it
+        // with a malformed config path so `fetch_web_stats` propagates a
+        // `Config::load` error before any HTTP request — proving the routing
+        // hit the web-stats path.
+        use std::env;
+        use std::path::PathBuf;
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // $HOME mutation is process-global; serialize within this test
+        // module. Cross-module races with src/steam/native.rs's HOME
+        // manipulation are still possible, but every alternative HOME those
+        // tests install either has no steamclient files or only "stub" bytes
+        // that `Library::new` cannot dlopen, so the `None` arm of
+        // `fetch_stats` is reached either way.
+        static HOME_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = HOME_LOCK.lock().unwrap();
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let home: PathBuf = env::temp_dir().join(format!(
+            "steamfetch-fetch-stats-home-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+
+        let cfg_path = env::temp_dir().join(format!(
+            "steamfetch-fetch-stats-cfg-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&cfg_path, "this is = not [valid toml").unwrap();
+
+        let prev_home = env::var("HOME").ok();
+        env::set_var("HOME", &home);
+
+        let cli = Cli {
+            demo: false,
+            verbose: false,
+            config: Some(cfg_path.clone()),
+            config_path: false,
+            timeout: 30,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(fetch_stats(&cli))
+            .expect_err("malformed config should propagate from fetch_web_stats");
+        let msg = format!("{:#}", err);
+
+        match prev_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_file(&cfg_path);
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected web-stats config-parse failure, got: {msg}",
+        );
+    }
+
     #[tokio::test]
     async fn test_fetch_web_stats_propagates_config_load_error() {
         // Invalid TOML in the supplied config path makes `Config::load` return
