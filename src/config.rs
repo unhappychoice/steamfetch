@@ -634,6 +634,27 @@ steam_api_key = "file-key"
 
     #[cfg(unix)]
     #[test]
+    fn test_create_default_config_errors_when_target_is_directory() {
+        // The parent already exists, so `create_dir_all` succeeds, but the
+        // target path itself resolves to an existing directory — `fs::write`
+        // then fails with `Is a directory`, exercising the write-context
+        // closure on lines 149-150.
+        let dir = unique_temp_path("write-fail-target");
+        fs::create_dir_all(&dir).unwrap();
+
+        let err = create_default_config(&dir).expect_err("writing to a directory path should fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to write config file"),
+            "expected write-context, got: {}",
+            msg
+        );
+
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_load_config_file_read_failure_returns_error() {
         // Pass a directory as the path: `p.exists()` is true (directories
         // exist), but `fs::read_to_string` fails, hitting the read-context
