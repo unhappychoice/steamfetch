@@ -1119,6 +1119,45 @@ mod tests {
             ));
             drop(listener);
         }
+
+        #[test]
+        fn test_request_with_retry_propagates_body_read_failure() {
+            // Server promises Content-Length: 100 in a 200 OK response, then
+            // closes the connection before sending any body bytes. reqwest's
+            // `.text().await` detects the truncated payload and yields an
+            // error, hitting the `with_context("Failed to read ... response
+            // body")?` arm on line 508 — a path the other 200-success tests
+            // don't reach because they always send a complete body.
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    // Promise a body but don't deliver it. `Connection: close`
+                    // signals to the client that the stream end is the body
+                    // end, so the missing 100 bytes surface as a
+                    // partial-response error rather than a hang.
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    // Drop the stream → FIN reaches the client mid-body.
+                }
+            });
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(2);
+            let err = run_async(client.request_with_retry(&url, "truncated"))
+                .expect_err("truncated body should propagate as an error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("Failed to read truncated response body"),
+                "expected body-read context, got: {msg}",
+            );
+            let _ = server.join();
+        }
     }
 
     mod fetch_achievement_stats_tests {
