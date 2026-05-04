@@ -552,3 +552,782 @@ fn format_number(n: u32) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::steam::{AchievementStats, RarestAchievement};
+
+    fn strip_ansi(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_format_number_zero() {
+        assert_eq!(format_number(0), "0");
+    }
+
+    #[test]
+    fn test_format_number_small() {
+        assert_eq!(format_number(7), "7");
+        assert_eq!(format_number(42), "42");
+        assert_eq!(format_number(999), "999");
+    }
+
+    #[test]
+    fn test_format_number_thousands() {
+        assert_eq!(format_number(1_000), "1,000");
+        assert_eq!(format_number(12_345), "12,345");
+        assert_eq!(format_number(999_999), "999,999");
+    }
+
+    #[test]
+    fn test_format_number_millions() {
+        assert_eq!(format_number(1_000_000), "1,000,000");
+        assert_eq!(format_number(1_234_567), "1,234,567");
+        assert_eq!(format_number(4_294_967_295), "4,294,967,295");
+    }
+
+    #[test]
+    fn test_format_playtime_minutes_only() {
+        assert_eq!(format_playtime(0), "0m");
+        assert_eq!(format_playtime(30), "30m");
+        assert_eq!(format_playtime(59), "59m");
+    }
+
+    #[test]
+    fn test_format_playtime_with_hours() {
+        assert_eq!(format_playtime(60), "1h 0m");
+        assert_eq!(format_playtime(90), "1h 30m");
+        assert_eq!(format_playtime(125), "2h 5m");
+        assert_eq!(format_playtime(3661), "61h 1m");
+    }
+
+    #[test]
+    fn test_truncate_shorter_than_max() {
+        let result = truncate("abc", 10);
+        assert_eq!(result.width(), 10);
+        assert!(result.starts_with("abc"));
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        let result = truncate("abcde", 5);
+        assert_eq!(result, "abcde");
+    }
+
+    #[test]
+    fn test_truncate_longer_than_max() {
+        let result = truncate("abcdefghij", 6);
+        assert_eq!(result.width(), 6);
+        assert!(result.contains("..."));
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        let result = truncate("", 5);
+        assert_eq!(result.width(), 5);
+    }
+
+    #[test]
+    fn test_truncate_unicode_wide_chars() {
+        // Each CJK char has width 2
+        let result = truncate("あいうえお", 4);
+        assert!(result.width() <= 4);
+    }
+
+    #[test]
+    fn test_logo_width_constant() {
+        assert_eq!(logo_width(), 35);
+    }
+
+    #[test]
+    fn test_build_logo_returns_18_lines() {
+        let lines = build_logo();
+        assert_eq!(lines.len(), 18);
+    }
+
+    #[test]
+    fn test_colorize_logo_line_wraps_with_ansi() {
+        let s = colorize_logo_line("hello");
+        assert!(s.contains("hello"));
+        assert!(s.contains("\x1b["));
+        assert!(s.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_games_title_lower_bound() {
+        let (label, _) = games_title(0);
+        assert_eq!(label, "Fledgling Spirit");
+    }
+
+    #[test]
+    fn test_games_title_buckets() {
+        assert_eq!(games_title(10).0, "Awakened Soul");
+        assert_eq!(games_title(20).0, "Wandering Phantom");
+        assert_eq!(games_title(40).0, "Shadow Initiate");
+        assert_eq!(games_title(60).0, "Void Walker");
+        assert_eq!(games_title(90).0, "Digital Specter");
+        assert_eq!(games_title(120).0, "Realm Collector");
+        assert_eq!(games_title(180).0, "Soul Harvester");
+        assert_eq!(games_title(250).0, "Chaos Bringer");
+        assert_eq!(games_title(350).0, "Dimension Hoarder");
+        assert_eq!(games_title(450).0, "Abyss Keeper");
+        assert_eq!(games_title(600).0, "Wallet Slayer");
+        assert_eq!(games_title(700).0, "Forbidden Archivist");
+        assert_eq!(games_title(900).0, "Eternal Curator");
+        assert_eq!(games_title(1100).0, "Void Emperor");
+        assert_eq!(games_title(1400).0, "Infinite Library");
+        assert_eq!(games_title(1700).0, "Reality Distorter");
+        assert_eq!(games_title(2500).0, "Steam Leviathan");
+        assert_eq!(games_title(4000).0, "Cosmic Devourer");
+        assert_eq!(games_title(99999).0, "GabeN's Chosen One");
+    }
+
+    #[test]
+    fn test_unplayed_title_buckets() {
+        assert_eq!(unplayed_title(0.0).0, "Actually Plays Games");
+        assert_eq!(unplayed_title(3.0).0, "Rare Specimen");
+        assert_eq!(unplayed_title(7.0).0, "Impressive Self-Control");
+        assert_eq!(unplayed_title(13.0).0, "Mostly Functional");
+        assert_eq!(unplayed_title(18.0).0, "Could Be Worse");
+        assert_eq!(unplayed_title(23.0).0, "Starting to Slip");
+        assert_eq!(unplayed_title(28.0).0, "I'll Play Tomorrow");
+        assert_eq!(unplayed_title(33.0).0, "Just One More Sale");
+        assert_eq!(unplayed_title(38.0).0, "Someday Maybe");
+        assert_eq!(unplayed_title(43.0).0, "Buying Is Playing");
+        assert_eq!(unplayed_title(48.0).0, "It Was On Sale OK");
+        assert_eq!(unplayed_title(53.0).0, "Send Help");
+        assert_eq!(unplayed_title(58.0).0, "My Wallet Weeps");
+        assert_eq!(unplayed_title(63.0).0, "Professional Dust Farmer");
+        assert_eq!(unplayed_title(68.0).0, "Why Am I Like This");
+        assert_eq!(unplayed_title(73.0).0, "Bundle Addiction");
+        assert_eq!(unplayed_title(78.0).0, "Gaming? What's That");
+        assert_eq!(unplayed_title(83.0).0, "Digital Landfill");
+        assert_eq!(unplayed_title(88.0).0, "Steam Sale Victim");
+        assert_eq!(unplayed_title(93.0).0, "Collecting Dust Pro");
+        assert_eq!(unplayed_title(99.0).0, "Why Do I Even Bother");
+    }
+
+    #[test]
+    fn test_playtime_title_buckets() {
+        assert_eq!(playtime_title(5).0, "Newborn Shadow");
+        assert_eq!(playtime_title(20).0, "Passing Specter");
+        assert_eq!(playtime_title(75).0, "Fleeting Presence");
+        assert_eq!(playtime_title(150).0, "Wandering Spirit");
+        assert_eq!(playtime_title(300).0, "Devoted Phantom");
+        assert_eq!(playtime_title(400).0, "Bound Soul");
+        assert_eq!(playtime_title(600).0, "Chained Existence");
+        assert_eq!(playtime_title(900).0, "Eternal Prisoner");
+        assert_eq!(playtime_title(1200).0, "Time Devourer");
+        assert_eq!(playtime_title(1700).0, "Reality Forsaker");
+        assert_eq!(playtime_title(2500).0, "Dimension Exile");
+        assert_eq!(playtime_title(3500).0, "Void Dweller");
+        assert_eq!(playtime_title(4500).0, "Sunlight Deserter");
+        assert_eq!(playtime_title(6000).0, "Nocturnal Overlord");
+        assert_eq!(playtime_title(8000).0, "Crimson Night King");
+        assert_eq!(playtime_title(12000).0, "Grass Myth Believer");
+        assert_eq!(playtime_title(17000).0, "Hermit of Eternity");
+        assert_eq!(playtime_title(25000).0, "Ascended Beyond");
+        assert_eq!(playtime_title(40000).0, "Timeless One");
+        assert_eq!(playtime_title(60000).0, "Chronos Incarnate");
+    }
+
+    #[test]
+    fn test_perfect_title_buckets() {
+        assert_eq!(perfect_title(0).0, "Unawakened");
+        assert_eq!(perfect_title(2).0, "First Blood");
+        assert_eq!(perfect_title(5).0, "Rising Hunter");
+        assert_eq!(perfect_title(10).0, "Soul Seeker");
+        assert_eq!(perfect_title(15).0, "Dark Pursuer");
+        assert_eq!(perfect_title(25).0, "Shadow Stalker");
+        assert_eq!(perfect_title(40).0, "Relentless Blade");
+        assert_eq!(perfect_title(50).0, "Trophy Reaper");
+        assert_eq!(perfect_title(70).0, "Glory Collector");
+        assert_eq!(perfect_title(90).0, "Perfection Seeker");
+        assert_eq!(perfect_title(120).0, "Flawless Executor");
+        assert_eq!(perfect_title(150).0, "Grandmaster of 100%");
+        assert_eq!(perfect_title(200).0, "Eternal Perfectionist");
+        assert_eq!(perfect_title(240).0, "Platinum Overlord");
+        assert_eq!(perfect_title(300).0, "Supreme Completionist");
+        assert_eq!(perfect_title(350).0, "Legendary Finisher");
+        assert_eq!(perfect_title(450).0, "Mythical Achiever");
+        assert_eq!(perfect_title(600).0, "Godslayer");
+        assert_eq!(perfect_title(700).0, "Beyond Perfection");
+        assert_eq!(perfect_title(1000).0, "Achievement Deity");
+    }
+
+    #[test]
+    fn test_steam_level_title_buckets() {
+        assert_eq!(steam_level_title(3).0, "Lurker");
+        assert_eq!(steam_level_title(8).0, "Novice");
+        assert_eq!(steam_level_title(13).0, "Apprentice");
+        assert_eq!(steam_level_title(18).0, "Regular");
+        assert_eq!(steam_level_title(23).0, "Established");
+        assert_eq!(steam_level_title(28).0, "Dedicated");
+        assert_eq!(steam_level_title(35).0, "Respected");
+        assert_eq!(steam_level_title(45).0, "Distinguished");
+        assert_eq!(steam_level_title(55).0, "Prestigious");
+        assert_eq!(steam_level_title(70).0, "Elite");
+        assert_eq!(steam_level_title(85).0, "Master");
+        assert_eq!(steam_level_title(95).0, "Grandmaster");
+        assert_eq!(steam_level_title(115).0, "Legend");
+        assert_eq!(steam_level_title(140).0, "Mythical");
+        assert_eq!(steam_level_title(180).0, "Immortal");
+        assert_eq!(steam_level_title(250).0, "Godlike");
+        assert_eq!(steam_level_title(400).0, "Ascended");
+        assert_eq!(steam_level_title(800).0, "Whale Supreme");
+        assert_eq!(steam_level_title(2000).0, "Touch Grass Please");
+    }
+
+    #[test]
+    fn test_account_age_title_buckets() {
+        assert_eq!(account_age_title(0).0, "Fresh Blood");
+        assert_eq!(account_age_title(1).0, "Newcomer");
+        assert_eq!(account_age_title(2).0, "Getting Hooked");
+        assert_eq!(account_age_title(3).0, "Loyal Customer");
+        assert_eq!(account_age_title(4).0, "Seasoned Gamer");
+        assert_eq!(account_age_title(5).0, "Veteran");
+        assert_eq!(account_age_title(6).0, "Battle-Hardened");
+        assert_eq!(account_age_title(7).0, "Old Guard");
+        assert_eq!(account_age_title(8).0, "Ancient One");
+        assert_eq!(account_age_title(9).0, "Living Legend");
+        assert_eq!(account_age_title(10).0, "Decade Survivor");
+        assert_eq!(account_age_title(11).0, "Time Traveler");
+        assert_eq!(account_age_title(12).0, "Eternal Witness");
+        assert_eq!(account_age_title(13).0, "Unlucky Thirteen");
+        assert_eq!(account_age_title(14).0, "Steam Fossil");
+        assert_eq!(account_age_title(15).0, "Digital Dinosaur");
+        assert_eq!(account_age_title(16).0, "Prehistoric Gamer");
+        assert_eq!(account_age_title(17).0, "Before It Was Cool");
+        assert_eq!(account_age_title(18).0, "OG Steam User");
+        assert_eq!(account_age_title(19).0, "Founding Father");
+        assert_eq!(account_age_title(99).0, "Primordial Entity");
+    }
+
+    #[test]
+    fn test_account_age_title_returns_distinct_colors_per_year() {
+        let colors: Vec<_> = (0..=19).map(|y| account_age_title(y).1).collect();
+        let unique: std::collections::HashSet<_> = colors.iter().collect();
+        assert_eq!(unique.len(), colors.len());
+    }
+
+    #[test]
+    fn test_achievement_title_buckets() {
+        assert_eq!(achievement_title(2.0).0, "Empty Vessel");
+        assert_eq!(achievement_title(8.0).0, "Dormant Power");
+        assert_eq!(achievement_title(13.0).0, "Stirring Darkness");
+        assert_eq!(achievement_title(18.0).0, "Awakening Force");
+        assert_eq!(achievement_title(23.0).0, "Rising Shadow");
+        assert_eq!(achievement_title(28.0).0, "Hungry Spirit");
+        assert_eq!(achievement_title(33.0).0, "Growing Ambition");
+        assert_eq!(achievement_title(38.0).0, "Burning Desire");
+        assert_eq!(achievement_title(43.0).0, "Unstoppable Will");
+        assert_eq!(achievement_title(48.0).0, "Half-Awakened");
+        assert_eq!(achievement_title(53.0).0, "Power Unleashed");
+        assert_eq!(achievement_title(58.0).0, "Chaos Rising");
+        assert_eq!(achievement_title(63.0).0, "Dark Dominator");
+        assert_eq!(achievement_title(68.0).0, "Realm Conqueror");
+        assert_eq!(achievement_title(73.0).0, "Relentless Force");
+        assert_eq!(achievement_title(78.0).0, "Apex Predator");
+        assert_eq!(achievement_title(83.0).0, "Obsidian Emperor");
+        assert_eq!(achievement_title(88.0).0, "Chaos Incarnate");
+        assert_eq!(achievement_title(93.0).0, "Near-Omniscient");
+        assert_eq!(achievement_title(98.0).0, "Edge of Infinity");
+        assert_eq!(achievement_title(100.0).0, "The Absolute One");
+    }
+
+    #[test]
+    fn test_gradient_text_preserves_chars() {
+        let result = gradient_text("hi", (255, 128, 64), true);
+        assert_eq!(strip_ansi(&result), "hi");
+    }
+
+    #[test]
+    fn test_gradient_text_empty_string() {
+        let result = gradient_text("", (100, 100, 100), false);
+        assert_eq!(strip_ansi(&result), "");
+        assert!(result.contains("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_gradient_text_reverse_starts_dimmer() {
+        let darken = gradient_text("X", (200, 200, 200), true);
+        let brighten = gradient_text("X", (200, 200, 200), false);
+        assert_ne!(darken, brighten);
+    }
+
+    #[test]
+    fn test_colorize_title_and_reverse_differ() {
+        let a = colorize_title("Test", (200, 100, 50));
+        let b = colorize_title_reverse("Test", (200, 100, 50));
+        assert_ne!(a, b);
+        assert_eq!(strip_ansi(&a), "Test");
+        assert_eq!(strip_ansi(&b), "Test");
+    }
+
+    #[test]
+    fn test_stat_line_formats_label_and_value() {
+        let line = stat_line("Games", "42", "Title".to_string());
+        let stripped = strip_ansi(&line);
+        assert!(stripped.contains("Games:"));
+        assert!(stripped.contains("42"));
+        assert!(stripped.contains("Title"));
+    }
+
+    #[test]
+    fn test_tree_lines_uses_branch_and_corner_prefix() {
+        let items = vec![
+            GameStat {
+                name: "First".to_string(),
+                playtime_minutes: 60,
+            },
+            GameStat {
+                name: "Second".to_string(),
+                playtime_minutes: 120,
+            },
+        ];
+        let times = vec!["1h".to_string(), "2h".to_string()];
+        let lines = tree_lines(&items, &times, 80);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("├─"));
+        assert!(lines[1].starts_with("└─"));
+        assert!(lines[0].contains("First"));
+        assert!(lines[1].contains("Second"));
+    }
+
+    #[test]
+    fn test_tree_lines_single_item_uses_corner() {
+        let items = vec![GameStat {
+            name: "Only".to_string(),
+            playtime_minutes: 30,
+        }];
+        let times = vec!["30m".to_string()];
+        let lines = tree_lines(&items, &times, 80);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("└─"));
+    }
+
+    #[test]
+    fn test_tree_lines_empty() {
+        let items: Vec<GameStat> = Vec::new();
+        let times: Vec<String> = Vec::new();
+        let lines = tree_lines(&items, &times, 80);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_tree_name_width_respects_min() {
+        let items = vec![GameStat {
+            name: "x".to_string(),
+            playtime_minutes: 0,
+        }];
+        let times = vec!["0m".to_string()];
+        // Even with very narrow inner_width, should not go below MIN_NAME_WIDTH (8)
+        let width = tree_name_width(&items, &times, 1);
+        assert_eq!(width, MIN_NAME_WIDTH);
+    }
+
+    #[test]
+    fn test_tree_name_width_caps_at_max_name() {
+        let long_name = "A".repeat(40);
+        let items = vec![GameStat {
+            name: long_name.clone(),
+            playtime_minutes: 0,
+        }];
+        let times = vec!["0m".to_string()];
+        let width = tree_name_width(&items, &times, 200);
+        assert_eq!(width, long_name.width());
+    }
+
+    fn make_minimal_stats() -> SteamStats {
+        SteamStats {
+            username: "alice".to_string(),
+            game_count: 10,
+            unplayed_count: 2,
+            total_playtime_minutes: 1200,
+            top_games: vec![GameStat {
+                name: "Game A".to_string(),
+                playtime_minutes: 600,
+            }],
+            achievement_stats: None,
+            account_created: None,
+            steam_level: None,
+            recently_played: Vec::new(),
+            avatar_url: None,
+        }
+    }
+
+    fn lines_text(lines: &[String]) -> String {
+        lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_build_info_lines_minimal_includes_required_sections() {
+        let stats = make_minimal_stats();
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("alice@Steam"));
+        assert!(text.contains("Games:"));
+        assert!(text.contains("Unplayed:"));
+        assert!(text.contains("Playtime:"));
+        assert!(text.contains("Top Played"));
+        assert!(text.contains("Game A"));
+        assert!(!text.contains("Member:"));
+        assert!(!text.contains("Level:"));
+        assert!(!text.contains("Perfect:"));
+        assert!(!text.contains("Achievements:"));
+        assert!(!text.contains("Recently Played"));
+        assert!(!text.contains("Rarest"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_steam_level_adds_level() {
+        let mut stats = make_minimal_stats();
+        stats.steam_level = Some(42);
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Level:"));
+        assert!(text.contains("42"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_account_created_adds_member() {
+        let mut stats = make_minimal_stats();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        stats.account_created = Some(now);
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Member:"));
+        assert!(text.contains("0 years"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_achievements_adds_perfect_and_achievements() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 50,
+            total_possible: 100,
+            perfect_games: 3,
+            rarest: None,
+        });
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Perfect:"));
+        assert!(text.contains("Achievements:"));
+        assert!(text.contains("50"));
+        assert!(text.contains("(50%)"));
+        assert!(!text.contains("Rarest"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_rarest_adds_rarest_section() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 1,
+            total_possible: 10,
+            perfect_games: 0,
+            rarest: Some(RarestAchievement {
+                name: "Hidden Gem".to_string(),
+                game: "Mystery Game".to_string(),
+                percent: 0.7,
+            }),
+        });
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Rarest"));
+        assert!(text.contains("Hidden Gem"));
+        assert!(text.contains("Mystery Game"));
+        assert!(text.contains("0.7%"));
+    }
+
+    #[test]
+    fn test_build_info_lines_with_recently_played_adds_section() {
+        let mut stats = make_minimal_stats();
+        stats.recently_played = vec![GameStat {
+            name: "Recent Game".to_string(),
+            playtime_minutes: 75,
+        }];
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("Recently Played"));
+        assert!(text.contains("Recent Game"));
+        assert!(text.contains("1h 15m"));
+    }
+
+    #[test]
+    fn test_build_info_lines_unplayed_percentage_rounds() {
+        let mut stats = make_minimal_stats();
+        stats.game_count = 4;
+        stats.unplayed_count = 1;
+        let lines = build_info_lines(&stats, 80);
+        let text = lines_text(&lines);
+        assert!(text.contains("(25%)"));
+    }
+
+    #[test]
+    fn test_account_age_years_recent_returns_zero() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(account_age_years(now), 0);
+    }
+
+    #[test]
+    fn test_account_age_years_one_year_ago() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let one_year_secs = 60 * 60 * 24 * 365;
+        assert_eq!(account_age_years(now - one_year_secs - 100), 1);
+    }
+
+    #[test]
+    fn test_inner_width_is_non_negative_and_bounded() {
+        // `inner_width()` reads `terminal_size()` which in a non-TTY test
+        // environment falls back to `DEFAULT_TERMINAL_WIDTH` (120) minus
+        // `LEFT_OFFSET`. Either way the value is a valid usize ≤ u16::MAX.
+        let w = inner_width();
+        assert!(w <= u16::MAX as usize);
+    }
+
+    #[test]
+    fn test_render_with_ascii_does_not_panic_with_empty_info() {
+        // Smoke test: should print the logo block without panicking.
+        render_with_ascii(&[]);
+    }
+
+    #[test]
+    fn test_render_with_ascii_handles_info_longer_than_logo() {
+        // 30 info lines exceeds the 18-line logo, exercising the
+        // `render_remaining_info` branch inside `render_with_ascii`.
+        let info: Vec<String> = (0..30).map(|i| format!("info {}", i)).collect();
+        render_with_ascii(&info);
+    }
+
+    #[test]
+    fn test_render_remaining_info_pads_with_logo_width() {
+        // Direct call covers the helper's iteration + println! path.
+        let lines = vec!["alpha".to_string(), "beta".to_string()];
+        render_remaining_info(&lines, logo_width());
+    }
+
+    #[test]
+    fn test_render_remaining_info_empty_input_is_noop() {
+        // No iteration; covers the early-exit shape of for_each on empty.
+        render_remaining_info(&[], 0);
+    }
+
+    #[tokio::test]
+    async fn test_render_with_image_disabled_uses_ascii_path() {
+        // image_config.enabled=false short-circuits to render_with_ascii,
+        // exercising the public `render` wrapper plus the false branch.
+        let stats = make_minimal_stats();
+        let config = ImageConfig {
+            enabled: false,
+            protocol: ImageProtocol::Auto,
+        };
+        render(&stats, &config).await;
+    }
+
+    #[tokio::test]
+    async fn test_render_with_image_enabled_but_no_avatar_url_falls_back_to_ascii() {
+        // avatar_url=None makes render_with_image take the early-return
+        // branch back into render_with_ascii without touching the network.
+        let mut stats = make_minimal_stats();
+        stats.avatar_url = None;
+        let config = ImageConfig {
+            enabled: true,
+            protocol: ImageProtocol::Auto,
+        };
+        render(&stats, &config).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    mod render_with_image_cache_tests {
+        use super::super::*;
+        use super::make_minimal_stats;
+        use crate::test_support::lock_env;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+        use std::env;
+        use std::io::Cursor;
+        use std::path::{Path, PathBuf};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        fn unique_cache_root(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-render-image-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        fn write_avatar_to_cache(root: &Path, username: &str) {
+            let dir = root.join("steamfetch").join("images");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(4, 4);
+            for y in 0..4 {
+                for x in 0..4 {
+                    buf.put_pixel(x, y, Rgba([10 * x as u8, 10 * y as u8, 200, 255]));
+                }
+            }
+            let img = DynamicImage::ImageRgba8(buf);
+            let mut png = Cursor::new(Vec::new());
+            img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+            let cache_key = format!("avatar_{}.png", username);
+            std::fs::write(dir.join(cache_key), png.into_inner()).unwrap();
+        }
+
+        // Build a single-thread runtime so the sync test can drive async
+        // code while keeping the env lock guard alive across the await
+        // (clippy::await_holding_lock would fire on a #[tokio::test]).
+        fn run_async<F: std::future::Future>(fut: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(fut)
+        }
+
+        // Drives `render_with_image`'s success path: cache hit returns an
+        // image, `print_image_and_rewind` succeeds (Sixel works without a
+        // TTY), and the info-line writer loop runs to completion. This
+        // exercises lines 40–78 of display.rs that the
+        // disabled / no-avatar-url tests cannot reach.
+        #[test]
+        fn test_render_with_image_uses_cached_avatar() {
+            let _guard = lock_env();
+            let root = unique_cache_root("ok");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "rendertest".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/never".to_string());
+            write_avatar_to_cache(&root, &stats.username);
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            // Sibling tests in this submodule run with XDG_CACHE_HOME unset,
+            // so EnvScope::Drop's `None => env::remove_var(...)` arm dominates
+            // and the `Some(v) => env::set_var(...)` arm on line 1197 stays
+            // uncovered. Pre-set the variable before constructing an EnvScope
+            // so prev = Some(v), forcing Drop to take the restore branch.
+            let _guard = lock_env();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            // Drop ran the `Some(v) => env::set_var(...)` arm, restoring the
+            // sentinel value rather than removing the variable.
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+
+        // Same as above, but with many info lines so the
+        // `extra = image_rows.saturating_sub(info_lines.len())` branch
+        // takes the saturating-to-zero path.
+        #[test]
+        fn test_render_with_image_handles_more_info_than_image_rows() {
+            let _guard = lock_env();
+            let root = unique_cache_root("many");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "manytest".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/never".to_string());
+            // Add an account_created + steam_level + achievements so that
+            // build_info_lines emits enough rows to exceed IMAGE_ROWS (18).
+            stats.account_created = Some(1_500_000_000);
+            stats.steam_level = Some(42);
+            stats.recently_played = (0..10)
+                .map(|i| GameStat {
+                    name: format!("Recent {}", i),
+                    playtime_minutes: 100,
+                })
+                .collect();
+            write_avatar_to_cache(&root, &stats.username);
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}

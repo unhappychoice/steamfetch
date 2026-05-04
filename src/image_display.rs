@@ -365,3 +365,811 @@ fn save_to_cache(key: &str, img: &DynamicImage) {
     let _ = img.write_to(&mut buf, image::ImageFormat::Png);
     let _ = fs::write(path, buf.into_inner());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_alphanumeric() {
+        assert_eq!(sanitize_cache_key("abcDEF123"), "abcDEF123");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_allowed_punctuation() {
+        assert_eq!(sanitize_cache_key("file_name-1.png"), "file_name-1.png");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_replaces_path_separators() {
+        assert_eq!(sanitize_cache_key("a/b\\c"), "a_b_c");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_replaces_spaces_and_specials() {
+        assert_eq!(sanitize_cache_key("hello world!?:*"), "hello_world____",);
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_empty_string() {
+        assert_eq!(sanitize_cache_key(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_keeps_unicode_alphanumeric() {
+        // Japanese characters are alphanumeric per Rust's char::is_alphanumeric
+        assert_eq!(sanitize_cache_key("テスト_1"), "テスト_1");
+    }
+
+    #[test]
+    fn test_resolve_protocol_kitty() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Kitty),
+            ResolvedProtocol::Kitty
+        ));
+    }
+
+    #[test]
+    fn test_resolve_protocol_iterm() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Iterm),
+            ResolvedProtocol::Iterm
+        ));
+    }
+
+    #[test]
+    fn test_resolve_protocol_sixel() {
+        assert!(matches!(
+            resolve_protocol(&ImageProtocol::Sixel),
+            ResolvedProtocol::Sixel
+        ));
+    }
+
+    #[test]
+    fn test_cache_dir_is_under_steamfetch_images() {
+        if let Some(dir) = cache_dir() {
+            assert!(dir.ends_with("steamfetch/images"));
+        }
+    }
+
+    #[test]
+    fn test_cursor_right_zero_is_noop() {
+        // The zero branch returns without writing any escape sequence.
+        // We can't capture stdout here, but the call must not panic.
+        cursor_right(0);
+    }
+
+    #[test]
+    fn test_cursor_right_nonzero_does_not_panic() {
+        // Exercises the formatted-write branch.
+        cursor_right(5);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_ioctl_does_not_panic_on_captured_stdout() {
+        // Under `cargo test` the test binary's stdout is captured by the
+        // runner, so `ioctl(STDOUT_FILENO, TIOCGWINSZ, ...)` typically
+        // returns -1 and the function short-circuits to None. Exercises
+        // the function entry, the ioctl syscall, the short-circuit on
+        // `r != 0`, and the trailing `None` fallback — paths that no
+        // existing test reaches because nothing else calls the helper
+        // directly. Even on hosts where ioctl succeeds without pixel
+        // info (`ws_xpixel == 0`), the contract is still that the call
+        // returns without panicking.
+        let _ = query_cell_size_ioctl();
+    }
+
+    mod print_tests {
+        use super::super::*;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+
+        fn make_test_image(w: u32, h: u32) -> DynamicImage {
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let r = ((x * 255) / w.max(1)) as u8;
+                    let g = ((y * 255) / h.max(1)) as u8;
+                    buf.put_pixel(x, y, Rgba([r, g, 128, 255]));
+                }
+            }
+            DynamicImage::ImageRgba8(buf)
+        }
+
+        #[test]
+        fn test_print_block_returns_term_rows_for_even_height() {
+            // 4 wide, 4 tall image scaled to 4 cols → scaled_h = 4 → ceil(4/2) = 2 rows.
+            let img = make_test_image(4, 4);
+            let rows = print_block(&img, 4).expect("print_block should succeed");
+            assert_eq!(rows, 2);
+        }
+
+        #[test]
+        fn test_print_block_rounds_odd_height_up() {
+            // 4 wide, 3 tall image at 2 cols → scale 0.5, scaled_h = 1, ceil(1/2) = 1.
+            let img = make_test_image(4, 3);
+            let rows = print_block(&img, 2).expect("print_block should succeed");
+            assert_eq!(rows, 1);
+        }
+
+        #[test]
+        fn test_print_kitty_chunked_encoding_does_not_panic() {
+            // Use a buffer larger than a single Kitty chunk so the multi-chunk
+            // branch (the `else` arm in the chunk loop) is exercised.
+            let w = 64u32;
+            let h = 64u32;
+            let rgba = vec![123u8; (w * h * 4) as usize];
+            print_kitty(&rgba, w, h).expect("print_kitty should succeed");
+        }
+
+        #[test]
+        fn test_print_kitty_single_chunk_does_not_panic() {
+            // Tiny buffer: one chunk total → first-chunk branch only.
+            let rgba = vec![0u8; 4 * 4 * 4];
+            print_kitty(&rgba, 4, 4).expect("print_kitty should succeed");
+        }
+
+        #[test]
+        fn test_print_iterm_writes_inline_png() {
+            let img = make_test_image(4, 4);
+            print_iterm(&img, 4, 4).expect("print_iterm should succeed");
+        }
+
+        #[test]
+        fn test_print_sixel_encodes_small_image() {
+            let w = 4usize;
+            let h = 4usize;
+            let rgba = vec![200u8; w * h * 4];
+            print_sixel(&rgba, w, h).expect("print_sixel should succeed");
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_kitty_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Kitty, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_iterm_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Iterm, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_sixel_returns_input_rows() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 4, 3);
+            assert_eq!(rows, Some(3));
+        }
+    }
+
+    mod env_tests {
+        use super::super::*;
+        use crate::test_support::lock_env;
+        use std::env;
+
+        const PROTOCOL_VARS: &[&str] = &[
+            "KITTY_WINDOW_ID",
+            "ITERM_SESSION_ID",
+            "WT_SESSION",
+            "TERM_PROGRAM",
+            "LC_TERMINAL",
+            "XTERM_VERSION",
+        ];
+
+        struct EnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl EnvScope {
+            fn clear_all() -> Self {
+                let saved = PROTOCOL_VARS
+                    .iter()
+                    .map(|&k| {
+                        let prev = env::var(k).ok();
+                        env::remove_var(k);
+                        (k, prev)
+                    })
+                    .collect();
+                Self { saved }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                for (k, v) in &self.saved {
+                    match v {
+                        Some(val) => env::set_var(k, val),
+                        None => env::remove_var(k),
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_returns_false_when_no_env_set() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_wt_session() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("WT_SESSION", "1");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_known_term_program() {
+            let _guard = lock_env();
+            for prog in ["WezTerm", "foot", "mlterm", "contour", "Black Box"] {
+                let _scope = EnvScope::clear_all();
+                env::set_var("TERM_PROGRAM", prog);
+                assert!(
+                    is_sixel_capable_terminal(),
+                    "TERM_PROGRAM={} should be sixel-capable",
+                    prog
+                );
+            }
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_unknown_term_program_is_false() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("TERM_PROGRAM", "Apple_Terminal");
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_lc_terminal_iterm2() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("LC_TERMINAL", "iTerm2");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_lc_terminal_other_is_false() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("LC_TERMINAL", "something-else");
+            assert!(!is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_is_sixel_capable_terminal_detects_xterm_version() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("XTERM_VERSION", "XTerm(370)");
+            assert!(is_sixel_capable_terminal());
+        }
+
+        #[test]
+        fn test_detect_protocol_prefers_kitty() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("KITTY_WINDOW_ID", "42");
+            // Even with iterm/sixel hints set, kitty wins.
+            env::set_var("ITERM_SESSION_ID", "xx");
+            env::set_var("WT_SESSION", "1");
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Kitty));
+        }
+
+        #[test]
+        fn test_detect_protocol_iterm_when_no_kitty() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("ITERM_SESSION_ID", "abc");
+            env::set_var("WT_SESSION", "1"); // sixel hint should not override
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Iterm));
+        }
+
+        #[test]
+        fn test_detect_protocol_sixel_when_only_sixel_hint() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("WT_SESSION", "1");
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Sixel));
+        }
+
+        #[test]
+        fn test_detect_protocol_falls_back_to_block() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            assert!(matches!(detect_protocol(), ResolvedProtocol::Block));
+        }
+
+        #[test]
+        fn test_resolve_protocol_auto_uses_detect() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            env::set_var("KITTY_WINDOW_ID", "1");
+            assert!(matches!(
+                resolve_protocol(&ImageProtocol::Auto),
+                ResolvedProtocol::Kitty
+            ));
+        }
+
+        #[test]
+        fn test_resolve_protocol_auto_falls_back_to_block() {
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+            assert!(matches!(
+                resolve_protocol(&ImageProtocol::Auto),
+                ResolvedProtocol::Block
+            ));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_auto_block_returns_block_rows() {
+            use image::{DynamicImage, ImageBuffer, Rgba};
+
+            let _guard = lock_env();
+            let _scope = EnvScope::clear_all();
+
+            // Build a 2x2 image; with cols=4 the scale is 2, scaled_h is 4,
+            // so print_block returns ceil(4/2) = 2 terminal rows.
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
+            for y in 0..2 {
+                for x in 0..2 {
+                    buf.put_pixel(x, y, Rgba([10, 20, 30, 255]));
+                }
+            }
+            let img = DynamicImage::ImageRgba8(buf);
+
+            // `rows` arg is intentionally different from the block-rendered
+            // height; the Block branch returns the height computed by
+            // print_block, not the caller-provided `rows`.
+            let result = print_image_and_rewind(&img, &ImageProtocol::Auto, 4, 99);
+            assert_eq!(result, Some(2));
+        }
+
+        #[test]
+        fn test_envscope_drop_removes_protocol_vars_when_prev_was_none() {
+            // Other tests in this module may run with one or more PROTOCOL_VARS
+            // already set, so EnvScope::Drop's `Some(v)` arm dominates. Force
+            // every var to be unset before EnvScope::clear_all so all six
+            // `prev` slots capture None — the Drop then runs the `None`
+            // branch for each, exercising the `None => env::remove_var(k)` arm.
+            let _guard = lock_env();
+            let outer: Vec<(&'static str, Option<String>)> = PROTOCOL_VARS
+                .iter()
+                .map(|&k| (k, env::var(k).ok()))
+                .collect();
+            for (k, _) in &outer {
+                env::remove_var(k);
+            }
+
+            {
+                let _scope = EnvScope::clear_all();
+                // While in scope, set one var so we can verify Drop removes it.
+                env::set_var("WT_SESSION", "scoped-marker");
+                assert_eq!(env::var("WT_SESSION").unwrap(), "scoped-marker");
+            }
+
+            // Drop ran the `None => env::remove_var(k)` branch for each var.
+            for &k in PROTOCOL_VARS {
+                assert!(env::var(k).is_err(), "{} should have been removed", k);
+            }
+
+            for (k, v) in &outer {
+                match v {
+                    Some(val) => env::set_var(k, val),
+                    None => env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod cache_fs_tests {
+        use super::super::*;
+        use crate::test_support::lock_env;
+        use image::{DynamicImage, ImageBuffer, Rgba};
+        use std::env;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn unique_cache_root(label: &str) -> std::path::PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-image-cache-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &std::path::Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        fn make_test_image() -> DynamicImage {
+            let mut buf: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
+            buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+            buf.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+            buf.put_pixel(0, 1, Rgba([0, 0, 255, 255]));
+            buf.put_pixel(1, 1, Rgba([255, 255, 0, 255]));
+            DynamicImage::ImageRgba8(buf)
+        }
+
+        #[test]
+        fn test_cache_dir_starts_with_xdg_root() {
+            let _guard = lock_env();
+            let root = unique_cache_root("dir");
+            let _scope = EnvScope::set(&root);
+
+            let dir = cache_dir().expect("XDG_CACHE_HOME set, cache_dir must exist");
+            assert!(dir.starts_with(&root));
+            assert!(dir.ends_with("steamfetch/images"));
+        }
+
+        #[test]
+        fn test_load_from_cache_returns_none_when_file_missing() {
+            let _guard = lock_env();
+            let root = unique_cache_root("missing");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            assert!(load_from_cache("does-not-exist.png").is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_from_cache_returns_none_when_file_is_not_image() {
+            let _guard = lock_env();
+            let root = unique_cache_root("corrupt");
+            let _scope = EnvScope::set(&root);
+
+            let dir = cache_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("not-an-image.png");
+            std::fs::write(&path, b"this is not a PNG").unwrap();
+
+            assert!(load_from_cache("not-an-image.png").is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_save_then_load_roundtrip_returns_equivalent_image() {
+            let _guard = lock_env();
+            let root = unique_cache_root("rt");
+            let _scope = EnvScope::set(&root);
+
+            let img = make_test_image();
+            save_to_cache("roundtrip.png", &img);
+
+            let loaded = load_from_cache("roundtrip.png")
+                .expect("image written by save_to_cache should be loadable");
+            assert_eq!(loaded.width(), img.width());
+            assert_eq!(loaded.height(), img.height());
+            // PNG round-trip preserves RGBA bytes exactly.
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_save_to_cache_creates_directory_when_missing() {
+            let _guard = lock_env();
+            let root = unique_cache_root("mkdir");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            save_to_cache("auto-mkdir.png", &make_test_image());
+
+            let dir = cache_dir().unwrap();
+            assert!(dir.exists(), "save_to_cache should create cache dir");
+            assert!(dir.join("auto-mkdir.png").exists());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        // Helper: build a single-thread runtime so we can drive async code
+        // from a sync test that owns the env lock for its full lifetime.
+        fn run_async<F: std::future::Future>(fut: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(fut)
+        }
+
+        #[test]
+        fn test_load_cached_or_download_returns_cached_without_network() {
+            let _guard = lock_env();
+            let root = unique_cache_root("cached");
+            let _scope = EnvScope::set(&root);
+
+            // Pre-populate the cache so the network branch is never reached.
+            let img = make_test_image();
+            save_to_cache("warm.png", &img);
+
+            // URL is intentionally bogus — must not be hit on a cache hit.
+            let loaded = run_async(load_cached_or_download(
+                "http://127.0.0.1:1/never",
+                "warm.png",
+            ))
+            .expect("cached image should be returned without download");
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_cached_or_download_uses_sanitized_key_lookup() {
+            let _guard = lock_env();
+            let root = unique_cache_root("sanitize");
+            let _scope = EnvScope::set(&root);
+
+            // Pre-populate using the sanitized form of the raw key.
+            let raw_key = "user/with spaces!.png";
+            let safe_key = "user_with_spaces_.png";
+            let img = make_test_image();
+            save_to_cache(safe_key, &img);
+
+            let loaded = run_async(load_cached_or_download("http://127.0.0.1:1/never", raw_key))
+                .expect("sanitized key should match the cached file");
+            assert_eq!(loaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        // Bind to a random port, capture it, then drop the listener.
+        // Guarantees nothing is listening on the returned URL so reqwest
+        // fails fast with a connection error rather than timing out.
+        fn unbound_localhost_url(suffix: &str) -> String {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local_addr").port();
+            drop(listener);
+            format!("http://127.0.0.1:{}/{}", port, suffix)
+        }
+
+        #[test]
+        fn test_download_image_returns_none_when_url_unreachable() {
+            // download_image is private; reach it through this submodule's
+            // `use super::super::*;`. Connection refused → reqwest's send
+            // returns Err, hits `.ok()?` and returns None.
+            let url = unbound_localhost_url("never.png");
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_load_cached_or_download_returns_none_when_cache_miss_and_download_fails() {
+            let _guard = lock_env();
+            let root = unique_cache_root("miss-then-fail");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            // Cache is empty, so the function falls through to download_image,
+            // which fails (connection refused) — overall result is None.
+            let url = unbound_localhost_url("absent.png");
+            let result = run_async(load_cached_or_download(&url, "absent.png"));
+            assert!(result.is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_download_image_returns_none_when_response_is_not_an_image() {
+            // Spawn a tiny one-shot HTTP server that returns 200 OK with a
+            // non-image body. reqwest succeeds, bytes are read, but
+            // image::load_from_memory fails → returns None.
+            // This exercises the final `.ok()` on line 347.
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/junk.png", addr);
+
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                // Drain request headers (best-effort).
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = b"not actually a PNG";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            });
+
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_download_image_returns_none_when_body_read_fails() {
+            // Server promises Content-Length: 100 in a 200 OK response, then
+            // closes the connection before sending any body bytes. reqwest's
+            // `.send().await` succeeds (headers parsed cleanly), but
+            // `.bytes().await` fails on the truncated payload — exercising the
+            // second `.ok()?` on line 346 of `download_image`. The other
+            // download_image tests reach either the `.send()` failure path
+            // (connection refused) or the `image::load_from_memory` failure
+            // path (non-image bytes), so this is the remaining `.ok()?` arm.
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/truncated.png", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    // Promise 100 bytes in the body but deliver none. The
+                    // `Connection: close` header tells the client that the
+                    // stream end is the body end, so the missing bytes
+                    // surface as a partial-response error rather than a hang.
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    // Drop the stream → FIN reaches the client mid-body.
+                }
+            });
+
+            let result = run_async(download_image(&url));
+            assert!(result.is_none());
+            let _ = server.join();
+        }
+
+        // Encodes a tiny image as PNG bytes for use as a mock HTTP response.
+        fn png_bytes(img: &DynamicImage) -> Vec<u8> {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, image::ImageFormat::Png)
+                .expect("encode PNG");
+            buf.into_inner()
+        }
+
+        // Spawn a one-shot HTTP server that returns the given PNG bytes
+        // with status 200, then exits.
+        fn spawn_png_server(png: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/avatar.png", addr);
+
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    png.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(&png);
+                let _ = stream.flush();
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_download_image_returns_some_when_response_is_a_png() {
+            // Cache-independent: just verifies the success branch of
+            // download_image where reqwest yields bytes that decode to a
+            // valid image.
+            let img = make_test_image();
+            let (url, server) = spawn_png_server(png_bytes(&img));
+
+            let result = run_async(download_image(&url)).expect("PNG body should decode");
+            assert_eq!(result.width(), img.width());
+            assert_eq!(result.height(), img.height());
+            assert_eq!(result.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_envscope_drop_removes_xdg_cache_home_when_prev_was_none() {
+            // Sibling tests in other modules (cache.rs, display.rs, client.rs
+            // cache_hit_tests) hold their own ENV_LOCKs but XDG_CACHE_HOME is
+            // process-global; whichever value is set when an EnvScope here
+            // captures `prev` dictates which Drop arm runs. In typical runs
+            // some other module has set the var, so EnvScope's
+            // `Some(v) => env::set_var(...)` arm dominates and the
+            // `None => env::remove_var("XDG_CACHE_HOME")` branch on line 798
+            // never runs. Force XDG_CACHE_HOME to be unset before EnvScope::set
+            // so prev = None, then verify Drop removes the value we set during
+            // the scope.
+            let _guard = lock_env();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+            env::remove_var("XDG_CACHE_HOME");
+
+            let root = unique_cache_root("envscope-none-arm");
+            std::fs::create_dir_all(&root).unwrap();
+            {
+                let _scope = EnvScope::set(&root);
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), root.to_string_lossy());
+            }
+
+            // Drop ran the `None => env::remove_var("XDG_CACHE_HOME")` branch.
+            assert!(env::var("XDG_CACHE_HOME").is_err());
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_cached_or_download_fetches_and_saves_when_cache_miss() {
+            // Empty cache + reachable HTTP server returning a real PNG →
+            // exercises the `download_image(...).await?` and
+            // `save_to_cache(...)` lines that the cache-hit and
+            // download-failure tests don't reach.
+            let _guard = lock_env();
+            let root = unique_cache_root("download-then-save");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            let img = make_test_image();
+            let (url, server) = spawn_png_server(png_bytes(&img));
+
+            let key = "fresh-avatar.png";
+            let downloaded = run_async(load_cached_or_download(&url, key))
+                .expect("server returns a PNG, decode must succeed");
+            assert_eq!(downloaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            // The save_to_cache call should have written the image under
+            // the sanitized key inside cache_dir().
+            let cached_path = cache_dir()
+                .expect("XDG_CACHE_HOME is set, cache_dir must resolve")
+                .join(key);
+            assert!(
+                cached_path.exists(),
+                "save_to_cache should have written {:?}",
+                cached_path
+            );
+
+            // Round-trip: load_from_cache on the same key yields the same
+            // bytes; this confirms the saved file is a valid image.
+            let reloaded =
+                load_from_cache(key).expect("file just written by save_to_cache should reload");
+            assert_eq!(reloaded.to_rgba8().into_raw(), img.to_rgba8().into_raw());
+
+            let _ = server.join();
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}

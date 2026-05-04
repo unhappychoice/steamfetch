@@ -331,4 +331,353 @@ mod tests {
         let appids = parse_games_xml(xml);
         assert_eq!(appids, vec![220, 240, 480]);
     }
+
+    #[test]
+    fn test_parse_games_xml_empty_string_returns_empty() {
+        assert!(parse_games_xml("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_no_game_tags_returns_empty() {
+        let xml = r#"<?xml version="1.0"?><root><other>123</other></root>"#;
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_skips_invalid_appid_content() {
+        let xml = r#"<games><game>not_a_number</game><game>440</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![440]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_handles_negative_number_as_invalid() {
+        // u32 cannot parse negative; the entry is dropped.
+        let xml = r#"<games><game>-7</game><game>730</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![730]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_trims_whitespace_in_content() {
+        let xml = "<games><game>  570  </game></games>";
+        assert_eq!(parse_games_xml(xml), vec![570]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_handles_attribute_only_tag() {
+        let xml = r#"<games><game id="1">10</game></games>"#;
+        assert_eq!(parse_games_xml(xml), vec![10]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_unclosed_game_tag_is_skipped() {
+        // No closing </game> after the opening tag — falls through to
+        // the `current_pos = abs_start + 1` recovery branch and finds nothing else.
+        let xml = "<games><game>123";
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_open_tag_without_closing_bracket_is_skipped() {
+        // "<game" appears but there's no '>' anywhere — the inner
+        // `xml[abs_start..].find('>')` returns None, recovery advances by 1.
+        let xml = "prefix <game and then nothing";
+        assert!(parse_games_xml(xml).is_empty());
+    }
+
+    #[test]
+    fn test_parse_games_xml_multiple_games_wrappers_handled() {
+        // Two `<games>` wrappers in sequence should both be skipped
+        // without producing spurious entries.
+        let xml = "<games></games><games><game>100</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![100]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_overflow_u32_is_skipped() {
+        // Larger than u32::MAX — parse fails, entry skipped.
+        let xml = "<games><game>9999999999999</game><game>20</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![20]);
+    }
+
+    #[cfg(target_os = "linux")]
+    mod steam_client_path_tests {
+        use super::super::*;
+        use crate::test_support::lock_env;
+        use std::env;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        struct HomeScope {
+            prev: Option<String>,
+        }
+
+        impl HomeScope {
+            fn set(home: &Path) -> Self {
+                let prev = env::var("HOME").ok();
+                env::set_var("HOME", home);
+                Self { prev }
+            }
+
+            fn unset() -> Self {
+                let prev = env::var("HOME").ok();
+                env::remove_var("HOME");
+                Self { prev }
+            }
+        }
+
+        impl Drop for HomeScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("HOME", v),
+                    None => env::remove_var("HOME"),
+                }
+            }
+        }
+
+        fn unique_root(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-native-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        fn touch(path: &Path) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"stub").unwrap();
+        }
+
+        #[test]
+        fn test_get_steam_client_path_returns_none_when_home_unset() {
+            let _guard = lock_env();
+            let _scope = HomeScope::unset();
+            assert!(get_steam_client_path().is_none());
+        }
+
+        #[test]
+        fn test_get_steam_client_path_returns_none_when_no_files_exist() {
+            let _guard = lock_env();
+            let root = unique_root("none");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+            assert!(get_steam_client_path().is_none());
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_prefers_sdk64() {
+            let _guard = lock_env();
+            let root = unique_root("sdk64");
+            let _scope = HomeScope::set(&root);
+            let sdk = root.join(".steam/sdk64/steamclient.so");
+            let local = root.join(".local/share/Steam/linux64/steamclient.so");
+            touch(&sdk);
+            touch(&local);
+
+            let found = get_steam_client_path().expect("sdk64 path should be returned");
+            assert_eq!(found, sdk.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_falls_back_to_steam_linux64() {
+            let _guard = lock_env();
+            let root = unique_root("middle");
+            let _scope = HomeScope::set(&root);
+            let middle = root.join(".steam/steam/linux64/steamclient.so");
+            touch(&middle);
+
+            let found = get_steam_client_path().expect("steam/linux64 path should be returned");
+            assert_eq!(found, middle.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_get_steam_client_path_falls_back_to_local_share() {
+            let _guard = lock_env();
+            let root = unique_root("local");
+            let _scope = HomeScope::set(&root);
+            let local = root.join(".local/share/Steam/linux64/steamclient.so");
+            touch(&local);
+
+            let found = get_steam_client_path().expect("local/share/Steam path should be returned");
+            assert_eq!(found, local.to_string_lossy());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_no_steam_client_found() {
+            // Empty $HOME → no candidate path exists → matches the `None`
+            // arm of `match get_steam_client_path()` and returns None.
+            // Exercises the early-return branch with verbose=false (no log).
+            let _guard = lock_env();
+            let root = unique_root("none-no-verbose");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_no_steam_client_found_verbose() {
+            // Same early-return path with verbose=true so the
+            // "[verbose] Steam client not found" eprintln branch runs.
+            let _guard = lock_env();
+            let root = unique_root("none-verbose");
+            fs::create_dir_all(&root).unwrap();
+            let _scope = HomeScope::set(&root);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_steam_client_fails_to_load() {
+            // A stub file at the sdk64 path satisfies `get_steam_client_path`,
+            // but `Library::new` fails to dlopen non-ELF bytes — the function
+            // hits the `Err(e) => return None` arm of the load match.
+            // verbose=false skips the eprintln branch.
+            let _guard = lock_env();
+            let root = unique_root("load-fail");
+            let _scope = HomeScope::set(&root);
+            let stub = root.join(".steam/sdk64/steamclient.so");
+            touch(&stub);
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_steam_client_fails_to_load_verbose() {
+            // Same load-failure path, verbose=true so both verbose branches
+            // ("Found Steam client at" and "Failed to load Steam client")
+            // execute.
+            let _guard = lock_env();
+            let root = unique_root("load-fail-verbose");
+            let _scope = HomeScope::set(&root);
+            let stub = root.join(".steam/sdk64/steamclient.so");
+            touch(&stub);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        // Pick the first existing system shared library from a portable list
+        // of common candidates. Returns None when none are present (the test
+        // that uses this will then no-op rather than fail spuriously on
+        // platforms where these libraries live elsewhere).
+        fn find_loadable_system_lib() -> Option<PathBuf> {
+            let candidates = [
+                "/lib/x86_64-linux-gnu/libdl.so.2",
+                "/lib/x86_64-linux-gnu/libpthread.so.0",
+                "/lib/x86_64-linux-gnu/libc.so.6",
+                "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+                "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+                "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                "/lib64/libdl.so.2",
+                "/lib64/libpthread.so.0",
+                "/lib64/libc.so.6",
+            ];
+            candidates
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|p| p.exists())
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_symbol_missing() {
+            // `Library::new` succeeds (we symlink to a real, loadable system
+            // library), but `lib.get(b"CreateInterface")` then fails because
+            // the loaded library does not export that symbol — exercises the
+            // `Err(e) => return None` arm of the CreateInterface match
+            // (lines ~152–158), a path the existing load-failure tests can't
+            // reach because their stub bytes never get past `Library::new`.
+            // verbose=false skips the eprintln.
+            let _guard = lock_env();
+
+            // Skip when no candidate system library is available — this
+            // platform isn't suitable for this test, treat it as a no-op
+            // rather than a failure.
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+
+            let root = unique_root("create-iface-missing");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real_lib, &target)
+                .expect("symlink to system lib should succeed in tmp dir");
+
+            assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_symbol_missing_verbose() {
+            // Same CreateInterface-missing path with verbose=true — exercises
+            // both the "Found Steam client at" log and the "Failed to get
+            // CreateInterface" verbose log inside the symbol-lookup error
+            // arm.
+            let _guard = lock_env();
+
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+
+            let root = unique_root("create-iface-missing-verbose");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real_lib, &target)
+                .expect("symlink to system lib should succeed in tmp dir");
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_homescope_drop_removes_home_when_prev_was_none() {
+            // The other tests in this module run with $HOME already set, so
+            // HomeScope::Drop's `Some(v)` arm is the only one ever hit. Force
+            // $HOME to be unset before HomeScope::set so prev = None,
+            // exercising the `None => env::remove_var("HOME")` branch on Drop.
+            let _guard = lock_env();
+            let outer_prev = env::var("HOME").ok();
+            env::remove_var("HOME");
+
+            let root = unique_root("homescope-none-arm");
+            fs::create_dir_all(&root).unwrap();
+            {
+                let _scope = HomeScope::set(&root);
+                assert_eq!(env::var("HOME").unwrap(), root.to_string_lossy());
+            }
+
+            // Drop ran the `None => env::remove_var("HOME")` branch.
+            assert!(env::var("HOME").is_err());
+
+            match outer_prev {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
 }

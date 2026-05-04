@@ -64,3 +64,284 @@ impl AchievementCache {
 fn cache_path() -> Option<PathBuf> {
     dirs::cache_dir().map(|p| p.join("steamfetch").join("achievements.json"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_cache_is_empty() {
+        let cache = AchievementCache::default();
+        assert!(cache.get(123, 0).is_none());
+    }
+
+    #[test]
+    fn test_set_then_get_returns_entry_when_last_played_matches() {
+        let mut cache = AchievementCache::default();
+        cache.set(42, 1000, 5, 10, Some(("Rare", 1.5)));
+        let entry = cache.get(42, 1000).expect("entry should exist");
+        assert_eq!(entry.last_played, 1000);
+        assert_eq!(entry.achieved, 5);
+        assert_eq!(entry.total, 10);
+        assert_eq!(entry.rarest_name.as_deref(), Some("Rare"));
+        assert_eq!(entry.rarest_percent, Some(1.5));
+    }
+
+    #[test]
+    fn test_get_returns_none_when_last_played_mismatches() {
+        let mut cache = AchievementCache::default();
+        cache.set(42, 1000, 5, 10, None);
+        assert!(cache.get(42, 999).is_none());
+    }
+
+    #[test]
+    fn test_get_returns_none_for_unknown_appid() {
+        let mut cache = AchievementCache::default();
+        cache.set(42, 1000, 5, 10, None);
+        assert!(cache.get(43, 1000).is_none());
+    }
+
+    #[test]
+    fn test_set_without_rarest_clears_rarest_fields() {
+        let mut cache = AchievementCache::default();
+        cache.set(7, 500, 1, 2, None);
+        let entry = cache.get(7, 500).unwrap();
+        assert!(entry.rarest_name.is_none());
+        assert!(entry.rarest_percent.is_none());
+    }
+
+    #[test]
+    fn test_set_overwrites_existing_entry() {
+        let mut cache = AchievementCache::default();
+        cache.set(1, 100, 1, 5, Some(("Old", 50.0)));
+        cache.set(1, 200, 3, 5, Some(("New", 10.0)));
+        assert!(cache.get(1, 100).is_none());
+        let entry = cache.get(1, 200).unwrap();
+        assert_eq!(entry.achieved, 3);
+        assert_eq!(entry.rarest_name.as_deref(), Some("New"));
+        assert_eq!(entry.rarest_percent, Some(10.0));
+    }
+
+    #[test]
+    fn test_serde_roundtrip_preserves_entries() {
+        let mut cache = AchievementCache::default();
+        cache.set(11, 1234, 8, 12, Some(("Legend", 0.25)));
+        cache.set(22, 5678, 0, 50, None);
+        let json = serde_json::to_string(&cache).unwrap();
+        let restored: AchievementCache = serde_json::from_str(&json).unwrap();
+        let a = restored.get(11, 1234).unwrap();
+        assert_eq!(a.achieved, 8);
+        assert_eq!(a.total, 12);
+        assert_eq!(a.rarest_name.as_deref(), Some("Legend"));
+        assert_eq!(a.rarest_percent, Some(0.25));
+        let b = restored.get(22, 5678).unwrap();
+        assert_eq!(b.total, 50);
+        assert!(b.rarest_name.is_none());
+    }
+
+    #[test]
+    fn test_cache_path_ends_with_steamfetch_achievements_json() {
+        // `dirs::cache_dir()` can return None on exotic platforms; only
+        // assert when it exists (mirrors the pattern in image_display tests).
+        if let Some(path) = cache_path() {
+            assert!(path.ends_with("steamfetch/achievements.json"));
+        }
+    }
+
+    #[test]
+    fn test_serde_roundtrip_handles_nan_percent_as_json_null() {
+        // serde_json represents non-finite floats (NaN/Inf) as JSON null
+        // rather than failing. A cache entry containing rarest_percent =
+        // f64::NAN therefore serializes successfully, and the resulting
+        // null deserializes back into Option::None — proving that the
+        // pipeline survives non-finite floats end-to-end without touching
+        // the filesystem (so this test cannot race on XDG_CACHE_HOME like
+        // the fs_tests submodule does).
+        let mut cache = AchievementCache::default();
+        cache.set(99, 4242, 3, 7, Some(("Edge Float", f64::NAN)));
+
+        let json = serde_json::to_string(&cache).expect("NaN should serialize as JSON null");
+        assert!(
+            json.contains("\"rarest_percent\":null"),
+            "NaN should encode as JSON null, got: {json}",
+        );
+        assert!(
+            json.contains("\"rarest_name\":\"Edge Float\""),
+            "rarest_name should round-trip verbatim, got: {json}",
+        );
+
+        let restored: AchievementCache =
+            serde_json::from_str(&json).expect("round-trip should deserialize cleanly");
+        let entry = restored.get(99, 4242).expect("entry must persist");
+        assert_eq!(entry.achieved, 3);
+        assert_eq!(entry.total, 7);
+        assert_eq!(entry.rarest_name.as_deref(), Some("Edge Float"));
+        assert!(
+            entry.rarest_percent.is_none(),
+            "JSON null deserializes Option<f64> as None"
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_handles_infinite_percent_as_json_null() {
+        // f64::INFINITY follows the same JSON-null serialization rule as NaN.
+        // Verifies the same contract for the other non-finite float so the
+        // achievement-percent pipeline does not silently drop or panic on
+        // unusual values returned by the Steam API.
+        let mut cache = AchievementCache::default();
+        cache.set(7, 0, 0, 0, Some(("Inf Sentinel", f64::INFINITY)));
+
+        let json = serde_json::to_string(&cache).expect("Inf should serialize as JSON null");
+        assert!(json.contains("\"rarest_percent\":null"));
+
+        let restored: AchievementCache = serde_json::from_str(&json).unwrap();
+        let entry = restored.get(7, 0).expect("entry must persist");
+        assert_eq!(entry.rarest_name.as_deref(), Some("Inf Sentinel"));
+        assert!(entry.rarest_percent.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    mod fs_tests {
+        use super::super::*;
+        use crate::test_support::lock_env;
+        use std::env;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn unique_cache_root(label: &str) -> std::path::PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            env::temp_dir().join(format!(
+                "steamfetch-cache-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                nanos
+            ))
+        }
+
+        struct EnvScope {
+            prev: Option<String>,
+        }
+
+        impl EnvScope {
+            fn set(root: &std::path::Path) -> Self {
+                let prev = env::var("XDG_CACHE_HOME").ok();
+                env::set_var("XDG_CACHE_HOME", root);
+                Self { prev }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                    None => env::remove_var("XDG_CACHE_HOME"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_cache_path_uses_xdg_cache_home() {
+            let _guard = lock_env();
+            let root = unique_cache_root("xdg");
+            let _scope = EnvScope::set(&root);
+
+            let path = cache_path().expect("XDG_CACHE_HOME set, path must exist");
+            assert!(path.starts_with(&root));
+            assert!(path.ends_with("steamfetch/achievements.json"));
+        }
+
+        #[test]
+        fn test_load_returns_default_when_cache_file_missing() {
+            let _guard = lock_env();
+            let root = unique_cache_root("missing");
+            let _scope = EnvScope::set(&root);
+            assert!(!root.exists());
+
+            let cache = AchievementCache::load();
+            assert!(cache.get(1, 0).is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_load_returns_default_when_cache_file_corrupt() {
+            let _guard = lock_env();
+            let root = unique_cache_root("corrupt");
+            let _scope = EnvScope::set(&root);
+
+            let path = cache_path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "{not valid json").unwrap();
+
+            let cache = AchievementCache::load();
+            assert!(cache.get(1, 0).is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            // Sibling tests start with XDG_CACHE_HOME unset, so EnvScope::Drop
+            // only ever runs its `None => env::remove_var(...)` arm. Pre-set
+            // the variable before constructing an EnvScope so prev = Some(v),
+            // forcing the `Some(v) => env::set_var(...)` arm on Drop.
+            let _guard = lock_env();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            // Drop ran the `Some(v) => env::set_var(...)` arm, restoring
+            // the sentinel value rather than removing the variable.
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+
+        #[test]
+        fn test_save_then_load_roundtrip_persists_entries() {
+            let _guard = lock_env();
+            let root = unique_cache_root("rt");
+            let _scope = EnvScope::set(&root);
+
+            let mut cache = AchievementCache::default();
+            cache.set(101, 5000, 7, 10, Some(("Rare", 0.5)));
+            cache.set(202, 6000, 0, 5, None);
+            cache.save();
+
+            // The file should exist on disk after save().
+            let path = cache_path().unwrap();
+            assert!(path.exists(), "save() must create the cache file");
+
+            let loaded = AchievementCache::load();
+            let a = loaded.get(101, 5000).expect("entry should persist");
+            assert_eq!(a.achieved, 7);
+            assert_eq!(a.total, 10);
+            assert_eq!(a.rarest_name.as_deref(), Some("Rare"));
+            assert_eq!(a.rarest_percent, Some(0.5));
+
+            let b = loaded.get(202, 6000).expect("entry should persist");
+            assert_eq!(b.total, 5);
+            assert!(b.rarest_name.is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}

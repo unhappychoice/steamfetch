@@ -3,6 +3,8 @@ mod config;
 mod display;
 mod image_display;
 mod steam;
+#[cfg(test)]
+mod test_support;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -123,7 +125,7 @@ async fn fetch_native_stats(native: NativeSteamClient, cli: &Cli) -> Result<stea
         .await
 }
 
-fn demo_stats() -> steam::SteamStats {
+pub(crate) fn demo_stats() -> steam::SteamStats {
     use steam::SteamStats;
 
     SteamStats {
@@ -168,5 +170,257 @@ fn demo_stats() -> steam::SteamStats {
             },
         ],
         avatar_url: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_demo_stats_returns_expected_username() {
+        let stats = demo_stats();
+        assert_eq!(stats.username, "unhappychoice");
+    }
+
+    #[test]
+    fn test_demo_stats_top_games_in_descending_playtime() {
+        let stats = demo_stats();
+        assert!(stats.top_games.len() >= 2);
+        for window in stats.top_games.windows(2) {
+            assert!(window[0].playtime_minutes >= window[1].playtime_minutes);
+        }
+    }
+
+    #[test]
+    fn test_demo_stats_unplayed_does_not_exceed_total() {
+        let stats = demo_stats();
+        assert!(stats.unplayed_count <= stats.game_count);
+    }
+
+    #[test]
+    fn test_demo_stats_achievements_consistent() {
+        let stats = demo_stats();
+        let ach = stats.achievement_stats.expect("demo has achievements");
+        assert!(ach.total_achieved <= ach.total_possible);
+        assert!(ach.perfect_games <= stats.game_count);
+        let rarest = ach.rarest.expect("demo has rarest achievement");
+        assert!(rarest.percent >= 0.0 && rarest.percent <= 100.0);
+        assert!(!rarest.name.is_empty());
+        assert!(!rarest.game.is_empty());
+    }
+
+    #[test]
+    fn test_demo_stats_recently_played_has_entries() {
+        let stats = demo_stats();
+        assert!(!stats.recently_played.is_empty());
+        for game in &stats.recently_played {
+            assert!(!game.name.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_demo_stats_avatar_url_is_none() {
+        assert!(demo_stats().avatar_url.is_none());
+    }
+
+    #[test]
+    fn test_cli_parses_minimum_args() {
+        let cli = Cli::try_parse_from(["steamfetch"]).expect("default args should parse");
+        assert!(!cli.demo);
+        assert!(!cli.verbose);
+        assert!(!cli.config_path);
+        assert!(!cli.image);
+        assert_eq!(cli.timeout, 30);
+        assert!(cli.config.is_none());
+        assert!(matches!(cli.image_protocol, ImageProtocol::Auto));
+    }
+
+    #[test]
+    fn test_cli_parses_demo_flag() {
+        let cli = Cli::try_parse_from(["steamfetch", "--demo"]).expect("--demo should parse");
+        assert!(cli.demo);
+    }
+
+    #[test]
+    fn test_cli_parses_verbose_short_flag() {
+        let cli = Cli::try_parse_from(["steamfetch", "-v"]).expect("-v should parse");
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_parses_config_path_flag() {
+        let cli = Cli::try_parse_from(["steamfetch", "--config-path"])
+            .expect("--config-path should parse");
+        assert!(cli.config_path);
+    }
+
+    #[test]
+    fn test_cli_parses_custom_timeout() {
+        let cli =
+            Cli::try_parse_from(["steamfetch", "--timeout", "5"]).expect("timeout should parse");
+        assert_eq!(cli.timeout, 5);
+    }
+
+    #[test]
+    fn test_cli_rejects_zero_timeout() {
+        // Range is 1.. — zero must be rejected by clap's value_parser.
+        assert!(Cli::try_parse_from(["steamfetch", "--timeout", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_parses_image_with_protocol() {
+        let cli = Cli::try_parse_from(["steamfetch", "--image", "--image-protocol", "kitty"])
+            .expect("image flags should parse");
+        assert!(cli.image);
+        assert!(matches!(cli.image_protocol, ImageProtocol::Kitty));
+    }
+
+    #[test]
+    fn test_cli_parses_each_image_protocol_variant() {
+        for (arg, expected) in [
+            ("auto", "Auto"),
+            ("kitty", "Kitty"),
+            ("iterm", "Iterm"),
+            ("sixel", "Sixel"),
+        ] {
+            let cli = Cli::try_parse_from(["steamfetch", "--image-protocol", arg])
+                .unwrap_or_else(|_| panic!("--image-protocol {} should parse", arg));
+            let got = format!("{:?}", cli.image_protocol);
+            assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn test_cli_rejects_unknown_image_protocol() {
+        assert!(Cli::try_parse_from(["steamfetch", "--image-protocol", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_parses_config_path_value() {
+        let cli = Cli::try_parse_from(["steamfetch", "--config", "/tmp/cfg.toml"])
+            .expect("--config should parse");
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/tmp/cfg.toml"))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_fetch_stats_routes_to_web_stats_when_native_unavailable() {
+        // On this Linux test environment the user's real $HOME may have a
+        // Steam install at ~/.steam/sdk64/steamclient.so, so calling
+        // `fetch_stats` without scoping $HOME could load real steamclient.so
+        // and reach Steam SDK code. Point $HOME at an empty temp directory:
+        // `NativeSteamClient::try_new` then matches the
+        // `None => fetch_web_stats(cli).await` arm of `fetch_stats`. Pair it
+        // with a malformed config path so `fetch_web_stats` propagates a
+        // `Config::load` error before any HTTP request — proving the routing
+        // hit the web-stats path.
+        use std::env;
+        use std::path::PathBuf;
+        use std::sync::Mutex;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // $HOME mutation is process-global; serialize within this test
+        // module. Cross-module races with src/steam/native.rs's HOME
+        // manipulation are still possible, but every alternative HOME those
+        // tests install either has no steamclient files or only "stub" bytes
+        // that `Library::new` cannot dlopen, so the `None` arm of
+        // `fetch_stats` is reached either way.
+        static HOME_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = HOME_LOCK.lock().unwrap();
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let home: PathBuf = env::temp_dir().join(format!(
+            "steamfetch-fetch-stats-home-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+
+        let cfg_path = env::temp_dir().join(format!(
+            "steamfetch-fetch-stats-cfg-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&cfg_path, "this is = not [valid toml").unwrap();
+
+        let prev_home = env::var("HOME").ok();
+        env::set_var("HOME", &home);
+
+        let cli = Cli {
+            demo: false,
+            verbose: false,
+            config: Some(cfg_path.clone()),
+            config_path: false,
+            timeout: 30,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(fetch_stats(&cli))
+            .expect_err("malformed config should propagate from fetch_web_stats");
+        let msg = format!("{:#}", err);
+
+        match prev_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_file(&cfg_path);
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected web-stats config-parse failure, got: {msg}",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_web_stats_propagates_config_load_error() {
+        // Invalid TOML in the supplied config path makes `Config::load` return
+        // Err, which `fetch_web_stats` propagates via `?` before constructing
+        // the SteamClient or making any HTTP request. Exercises the function
+        // entry, the `Config::load(...)?` line, and the early-return path.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "steamfetch-fetch-web-stats-test-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, "this is = not [valid toml").unwrap();
+
+        let cli = Cli {
+            demo: false,
+            verbose: false,
+            config: Some(path.clone()),
+            config_path: false,
+            timeout: 30,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = fetch_web_stats(&cli)
+            .await
+            .expect_err("invalid TOML should make Config::load propagate an error");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected parse-failure context, got: {msg}",
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }

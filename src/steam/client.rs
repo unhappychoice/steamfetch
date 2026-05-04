@@ -658,32 +658,781 @@ mod tests {
         let games = super::super::models::OwnedGamesData {
             game_count: 3,
             games: vec![
-                super::super::models::Game {
-                    appid: 1,
-                    name: Some("A".to_string()),
-                    playtime_forever: 10,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
-                super::super::models::Game {
-                    appid: 2,
-                    name: Some("B".to_string()),
-                    playtime_forever: 100,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
-                super::super::models::Game {
-                    appid: 3,
-                    name: Some("C".to_string()),
-                    playtime_forever: 50,
-                    playtime_2weeks: 0,
-                    rtime_last_played: 0,
-                },
+                make_game(1, Some("A"), 10),
+                make_game(2, Some("B"), 100),
+                make_game(3, Some("C"), 50),
             ],
         };
         let top = extract_top_games(&games);
         assert_eq!(top[0].name, "B");
         assert_eq!(top[1].name, "C");
         assert_eq!(top[2].name, "A");
+    }
+
+    fn make_game(appid: u32, name: Option<&str>, playtime: u32) -> super::super::models::Game {
+        super::super::models::Game {
+            appid,
+            name: name.map(|n| n.to_string()),
+            playtime_forever: playtime,
+            playtime_2weeks: 0,
+            rtime_last_played: 0,
+        }
+    }
+
+    #[test]
+    fn test_detect_api_error_forbidden_message() {
+        let body = r#"{"error":"Forbidden"}"#;
+        let result = detect_api_error(body, false);
+        let err = result.unwrap_err();
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_access_is_denied_message() {
+        let body = "<html><body>Access is denied</body></html>";
+        let result = detect_api_error(body, false);
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_players_with_space() {
+        let body = r#"{"response":{"players": []}}"#;
+        let err = detect_api_error(body, false).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PlayerNotFound
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_empty_games_array_with_key_is_ok() {
+        let body = r#"{"response":{"game_count":0,"games":[]}}"#;
+        assert!(detect_private_profile(body).is_ok());
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_with_zero_count_is_private() {
+        let body = r#"{"response":{"game_count":0"#; // truncated/invalid JSON
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PrivateProfile
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_without_games_is_private() {
+        let body = "totally not json";
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::PrivateProfile
+        ));
+    }
+
+    #[test]
+    fn test_detect_private_profile_parse_failure_other_returns_anyhow() {
+        // Has "games" key but is malformed → falls through to the
+        // generic "Failed to parse owned games response" branch.
+        let body = r#"{"response":{"games":"not_an_array"}}"#;
+        let err = detect_private_profile(body).unwrap_err();
+        assert!(err.downcast_ref::<SteamApiError>().is_none());
+        assert!(err.to_string().contains("Failed to parse owned games"));
+    }
+
+    #[test]
+    fn test_extract_top_games_empty_input() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 0,
+            games: vec![],
+        };
+        let top = extract_top_games(&games);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn test_extract_top_games_truncates_to_five() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 7,
+            games: (0..7)
+                .map(|i| make_game(i as u32, Some(&format!("G{}", i)), (i as u32) * 10))
+                .collect(),
+        };
+        let top = extract_top_games(&games);
+        assert_eq!(top.len(), 5);
+        assert_eq!(top[0].name, "G6");
+        assert_eq!(top[4].name, "G2");
+    }
+
+    #[test]
+    fn test_extract_top_games_falls_back_to_appid_when_name_missing() {
+        let games = super::super::models::OwnedGamesData {
+            game_count: 1,
+            games: vec![make_game(12345, None, 60)],
+        };
+        let top = extract_top_games(&games);
+        assert_eq!(top[0].name, "App 12345");
+        assert_eq!(top[0].playtime_minutes, 60);
+    }
+
+    #[test]
+    fn test_steam_client_builder_defaults() {
+        let c = SteamClient::new("k".to_string(), "id".to_string());
+        assert!(!c.verbose);
+        assert_eq!(c.timeout, Duration::from_secs(DEFAULT_TIMEOUT_SECS));
+        assert_eq!(c.api_key, "k");
+        assert_eq!(c.steam_id, "id");
+    }
+
+    #[test]
+    fn test_steam_client_with_verbose_sets_flag() {
+        let c = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+        assert!(c.verbose);
+    }
+
+    #[test]
+    fn test_steam_client_with_timeout_overrides_default() {
+        let c = SteamClient::new("k".into(), "id".into()).with_timeout(7);
+        assert_eq!(c.timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn test_build_http_client_does_not_panic() {
+        // Constructs and drops the client to ensure the builder
+        // settings remain valid.
+        let _ = build_http_client(Duration::from_secs(1));
+        let _ = build_http_client(Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_print_status_does_not_panic() {
+        // Writes a CR + clear-line escape + message to stderr; the
+        // assertion is simply that it completes without panicking.
+        print_status("hello");
+        print_status("");
+    }
+
+    #[test]
+    fn test_clear_status_does_not_panic() {
+        clear_status();
+    }
+
+    #[test]
+    fn test_detect_api_error_forbidden_with_verbose_true_logs_and_returns_invalid_key() {
+        // Exercises the `if verbose { eprintln!(...) }` branch inside the
+        // Forbidden/Access-is-denied arm — previously only the verbose=false
+        // path was covered.
+        let body = r#"{"error":"Forbidden"}"#;
+        let err = detect_api_error(body, true).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[test]
+    fn test_detect_api_error_access_denied_with_verbose_true() {
+        // Same verbose branch via the alternative trigger string.
+        let body = "<html>Access is denied</html>";
+        let err = detect_api_error(body, true).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<SteamApiError>().unwrap(),
+            SteamApiError::InvalidApiKey
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_owned_games_for_appids_empty_returns_empty_data() {
+        // Empty appids slice — the chunks(100) iterator yields nothing,
+        // so no HTTP request is dispatched. Exercises the function entry,
+        // the empty loop, and the final OwnedGamesData construction.
+        let client = SteamClient::new("k".into(), "id".into());
+        let data = client
+            .fetch_owned_games_for_appids(&[])
+            .await
+            .expect("empty input should not error");
+        assert_eq!(data.game_count, 0);
+        assert!(data.games.is_empty());
+    }
+
+    #[test]
+    fn test_fetch_owned_games_for_appids_enters_chunks_loop_with_non_empty_slice() {
+        // A non-empty appids slice produces one chunk, so the for-loop body
+        // is entered and `fetch_owned_games_filtered(Some(chunk))` is invoked
+        // — exercising the source line that the empty-slice test cannot
+        // reach (chunks(100) of [] yields nothing). The inner call targets
+        // BASE_URL and is therefore not reachable from a unit test, so we
+        // wrap the whole call in a tight `tokio::time::timeout` to abort
+        // before any real network handshake completes. The line counter for
+        // the loop-body statement increments as soon as the future starts
+        // evaluating that statement, which happens before the inner await
+        // yields — independently of whether the timeout or the request
+        // itself wins the race.
+        use std::time::Duration;
+        let client = SteamClient::new("k".into(), "id".into()).with_timeout(1);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt");
+        let _ = rt.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                client.fetch_owned_games_for_appids(&[1]),
+            )
+            .await
+        });
+    }
+
+    mod request_with_retry_tests {
+        use super::super::*;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(f)
+        }
+
+        // Bind to a random port, capture it, then drop the listener.
+        // Guarantees nothing is listening on the returned URL so reqwest
+        // fails fast with a connection error rather than timing out.
+        fn unbound_localhost_url() -> String {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local_addr").port();
+            drop(listener);
+            format!("http://127.0.0.1:{}/", port)
+        }
+
+        // Spin up a TCP server that responds to `n` consecutive requests
+        // with the same status/body, then exits.
+        fn spawn_n_shot_server(
+            n: usize,
+            status: u16,
+            reason: &'static str,
+            body: &'static [u8],
+        ) -> (String, std::thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                for _ in 0..n {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        return;
+                    };
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        status,
+                        reason,
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(body);
+                    let _ = stream.flush();
+                }
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_on_200_success() {
+            let (url, server) = spawn_n_shot_server(1, 200, "OK", b"hello-body");
+            let client = SteamClient::new("k".into(), "id".into());
+            let body = run_async(client.request_with_retry(&url, "test"))
+                .expect("200 response should succeed");
+            assert_eq!(body, "hello-body");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_on_200_when_verbose() {
+            // Same success path but with verbose=true to exercise the
+            // [verbose] status / response body log branches.
+            let (url, server) = spawn_n_shot_server(1, 200, "OK", b"verbose-success");
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let body = run_async(client.request_with_retry(&url, "verbose"))
+                .expect("200 response should succeed");
+            assert_eq!(body, "verbose-success");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_invalid_api_key_on_403() {
+            // 403 maps to InvalidApiKey via classify_http_error, which is
+            // non-retryable, so only one request is made.
+            let (url, server) = spawn_n_shot_server(1, 403, "Forbidden", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "test"))
+                .expect_err("403 should produce an error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::InvalidApiKey
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_api_error_on_400_with_body() {
+            // 400 maps via classify_http_error's catch-all arm, which reads
+            // the response body into ApiError.message. Non-retryable.
+            let (url, server) = spawn_n_shot_server(1, 400, "Bad Request", b"bad-input");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "test"))
+                .expect_err("400 should produce an error");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 400);
+                    assert_eq!(message, "bad-input");
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_429() {
+            // 429 → RateLimited (retryable). All 3 attempts fail, so the
+            // loop completes and the last error is returned.
+            let (url, server) = spawn_n_shot_server(3, 429, "Too Many Requests", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "rate"))
+                .expect_err("429 retries should still fail");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::RateLimited
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_500() {
+            // 500 → ApiError (status 5xx is retryable). Three attempts.
+            let (url, server) =
+                spawn_n_shot_server(3, 500, "Internal Server Error", b"server-oops");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "srv"))
+                .expect_err("500 retries should still fail");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 500);
+                    assert_eq!(message, "server-oops");
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_exhausts_retries_on_connection_refused() {
+            // No listener at the URL → reqwest send() returns Err that is
+            // not is_timeout(), mapping to NetworkError (retryable).
+            let url = unbound_localhost_url();
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "net"))
+                .expect_err("connection refused should fail");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::NetworkError(_)
+            ));
+        }
+
+        #[test]
+        fn test_request_with_retry_logs_backoff_when_verbose() {
+            // verbose=true + retryable error exercises the backoff and
+            // request-failed [verbose] log branches inside the retry loop.
+            let url = unbound_localhost_url();
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let err = run_async(client.request_with_retry(&url, "verbose-net"))
+                .expect_err("connection refused should fail");
+            assert!(err.downcast_ref::<SteamApiError>().is_some());
+        }
+
+        // Spin up a TCP server that responds to consecutive requests using
+        // the supplied (status, reason, body) sequence. After the sequence is
+        // exhausted the server thread exits.
+        fn spawn_sequential_server(
+            sequence: Vec<(u16, &'static str, &'static [u8])>,
+        ) -> (String, std::thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                for (status, reason, body) in sequence {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        return;
+                    };
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        status,
+                        reason,
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(body);
+                    let _ = stream.flush();
+                }
+            });
+
+            (url, server)
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_body_after_retryable_failure() {
+            // First attempt: 500 (retryable) → loop sets last_error, sleeps a
+            // backoff, then second attempt returns 200. Exercises the
+            // retry-then-success path: the `attempt > 0` backoff branch and a
+            // successful body return after a previous failure was recorded.
+            let (url, server) = spawn_sequential_server(vec![
+                (500, "Internal Server Error", b"transient"),
+                (200, "OK", b"recovered-body"),
+            ]);
+            let client = SteamClient::new("k".into(), "id".into());
+            let body = run_async(client.request_with_retry(&url, "retry-success"))
+                .expect("retry should succeed on second attempt");
+            assert_eq!(body, "recovered-body");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_succeeds_after_retry_when_verbose() {
+            // Same retry-then-success flow with verbose=true — exercises the
+            // verbose backoff log AND the verbose status / body log on the
+            // successful retry attempt within the same call.
+            let (url, server) = spawn_sequential_server(vec![
+                (429, "Too Many Requests", b""),
+                (200, "OK", b"verbose-recovered"),
+            ]);
+            let client = SteamClient::new("k".into(), "id".into()).with_verbose(true);
+            let body = run_async(client.request_with_retry(&url, "verbose-retry"))
+                .expect("retry should succeed on second attempt");
+            assert_eq!(body, "verbose-recovered");
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_returns_timeout_when_server_hangs() {
+            // Bind a listener but never call accept(): the kernel completes
+            // each TCP handshake and queues the connection, so reqwest's
+            // send() proceeds past connect, then waits indefinitely for a
+            // response. With a 1s client timeout, this triggers the
+            // `Err(e) if e.is_timeout()` arm in request_with_retry, mapping
+            // to SteamApiError::Timeout (retryable).
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(1);
+            let err = run_async(client.request_with_retry(&url, "hang"))
+                .expect_err("hanging server should produce timeout error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::Timeout
+            ));
+            drop(listener);
+        }
+
+        #[test]
+        fn test_request_with_retry_propagates_body_read_failure() {
+            // Server promises Content-Length: 100 in a 200 OK response, then
+            // closes the connection before sending any body bytes. reqwest's
+            // `.text().await` detects the truncated payload and yields an
+            // error, hitting the `with_context("Failed to read ... response
+            // body")?` arm on line 508 — a path the other 200-success tests
+            // don't reach because they always send a complete body.
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    // Promise a body but don't deliver it. `Connection: close`
+                    // signals to the client that the stream end is the body
+                    // end, so the missing 100 bytes surface as a
+                    // partial-response error rather than a hang.
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    // Drop the stream → FIN reaches the client mid-body.
+                }
+            });
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(2);
+            let err = run_async(client.request_with_retry(&url, "truncated"))
+                .expect_err("truncated body should propagate as an error");
+            let msg = format!("{:#}", err);
+            assert!(
+                msg.contains("Failed to read truncated response body"),
+                "expected body-read context, got: {msg}",
+            );
+            let _ = server.join();
+        }
+    }
+
+    mod fetch_achievement_stats_tests {
+        use super::super::*;
+
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(f)
+        }
+
+        #[test]
+        fn test_fetch_achievement_stats_returns_none_for_empty_games() {
+            // Empty input → the per-game `for` loop is skipped, so no HTTP
+            // requests are dispatched and the function reaches the
+            // `(total_possible > 0).then_some(...)` tail with
+            // `total_possible == 0`, returning None.
+            //
+            // Robust against XDG_CACHE_HOME races with sibling test
+            // submodules: the assertion is None regardless of which
+            // directory `AchievementCache::load`/`save` happens to touch.
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 0,
+                games: vec![],
+            };
+            let client = SteamClient::new("k".into(), "id".into());
+            let result = run_async(client.fetch_achievement_stats(&games));
+            assert!(result.is_none());
+        }
+
+        #[cfg(target_os = "linux")]
+        mod cache_hit_tests {
+            use super::super::super::*;
+            use crate::cache::AchievementCache;
+            use crate::steam::models;
+            use std::env;
+            use std::path::Path;
+            use std::sync::Mutex;
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            // XDG_CACHE_HOME is process-global; serialize mutations within this
+            // submodule. Other test files (cache.rs, image_display.rs,
+            // display.rs) hold their own ENV_LOCKs — cross-module races are
+            // possible but the test here only asserts on data that came from
+            // *this* test's pre-populated cache, so a stale read would
+            // surface as an assertion failure rather than silent flakiness.
+            static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+            struct EnvScope {
+                prev: Option<String>,
+            }
+
+            impl EnvScope {
+                fn set(root: &Path) -> Self {
+                    let prev = env::var("XDG_CACHE_HOME").ok();
+                    env::set_var("XDG_CACHE_HOME", root);
+                    Self { prev }
+                }
+            }
+
+            impl Drop for EnvScope {
+                fn drop(&mut self) {
+                    match &self.prev {
+                        Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                        None => env::remove_var("XDG_CACHE_HOME"),
+                    }
+                }
+            }
+
+            fn unique_cache_root(label: &str) -> std::path::PathBuf {
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                env::temp_dir().join(format!(
+                    "steamfetch-fetch-ach-{}-{}-{}",
+                    label,
+                    std::process::id(),
+                    nanos
+                ))
+            }
+
+            fn run_async<F: std::future::Future>(f: F) -> F::Output {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("rt")
+                    .block_on(f)
+            }
+
+            fn make_game(appid: u32, name: Option<&str>, last_played: u64) -> models::Game {
+                models::Game {
+                    appid,
+                    name: name.map(|s| s.to_string()),
+                    playtime_forever: 0,
+                    playtime_2weeks: 0,
+                    rtime_last_played: last_played,
+                }
+            }
+
+            // Run `body` with XDG_CACHE_HOME pinned to a unique temp root.
+            // Other test modules (cache.rs, image_display.rs, display.rs,
+            // config.rs) hold their own ENV_LOCKs but the env var is
+            // process-global, so a cross-module write between our
+            // `cache.save()` and the function's internal
+            // `AchievementCache::load()` would silently leave the cache
+            // empty — `fetch_achievement_stats` then falls through to HTTP
+            // fetches that also fail and returns None. Treat None as
+            // "race lost; retry" up to a few times so the assertions only
+            // run when the cache hit actually occurred.
+            fn run_with_pinned_cache<F>(label: &str, body: F)
+            where
+                F: Fn(&std::path::Path) -> bool,
+            {
+                let _guard = ENV_LOCK.lock().unwrap();
+                for attempt in 0..5 {
+                    let root = unique_cache_root(&format!("{}-{}", label, attempt));
+                    let scope = EnvScope::set(&root);
+                    let succeeded = body(&root);
+                    drop(scope);
+                    let _ = std::fs::remove_dir_all(&root);
+                    if succeeded {
+                        return;
+                    }
+                }
+                panic!(
+                    "fetch_achievement_stats never observed our pinned cache \
+                     after 5 attempts — XDG_CACHE_HOME race lost every time"
+                );
+            }
+
+            #[test]
+            fn test_fetch_achievement_stats_aggregates_from_cache() {
+                // Pre-populate the achievement cache via XDG_CACHE_HOME so the
+                // per-game loop hits the `if let Some(cached) = cache.get(...)`
+                // branch for every game, never dispatching any HTTP. Exercises
+                // the cache-hit accumulation, perfect-games detection, rarest
+                // candidate push, and the rarest-selection min_by tail.
+                run_with_pinned_cache("agg", |_root| {
+                    let mut cache = AchievementCache::default();
+                    // Perfect game with rarest achievement.
+                    cache.set(100, 1000, 10, 10, Some(("Rare One", 5.0)));
+                    // Non-perfect game without rarest.
+                    cache.set(200, 2000, 3, 10, None);
+                    // Non-perfect game with a rarer (lower percent) achievement
+                    // — becomes the global rarest after the min_by selection.
+                    cache.set(300, 3000, 1, 4, Some(("Even Rarer", 1.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 3,
+                        games: vec![
+                            make_game(100, Some("Game One"), 1000),
+                            make_game(200, Some("Game Two"), 2000),
+                            make_game(300, Some("Game Three"), 3000),
+                        ],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    assert_eq!(stats.total_achieved, 14);
+                    assert_eq!(stats.total_possible, 24);
+                    assert_eq!(stats.perfect_games, 1);
+
+                    let rarest = stats.rarest.expect("two cached entries had rarest");
+                    assert_eq!(rarest.name, "Even Rarer");
+                    assert_eq!(rarest.game, "Game Three");
+                    assert!((rarest.percent - 1.5).abs() < f64::EPSILON);
+                    true
+                });
+            }
+
+            #[test]
+            fn test_fetch_achievement_stats_falls_back_to_appid_for_unnamed_game() {
+                // A cached game with `name: None` exercises the
+                // `unwrap_or_else(|| format!("App {}", appid))` fallback for
+                // game_name. The rarest's `game` field then carries the
+                // synthesized "App {appid}" label.
+                run_with_pinned_cache("noname", |_root| {
+                    let mut cache = AchievementCache::default();
+                    cache.set(4242, 7777, 2, 5, Some(("Lonely", 9.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 1,
+                        games: vec![make_game(4242, None, 7777)],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    assert_eq!(stats.total_achieved, 2);
+                    assert_eq!(stats.total_possible, 5);
+                    assert_eq!(stats.perfect_games, 0);
+                    let rarest = stats.rarest.expect("rarest was present in cache");
+                    assert_eq!(rarest.game, "App 4242");
+                    assert_eq!(rarest.name, "Lonely");
+                    true
+                });
+            }
+
+            #[test]
+            fn test_fetch_achievement_stats_rarest_tie_breaks_on_game_then_name() {
+                // Two cached rarest achievements that tie on `percent` AND on
+                // `game` so the `min_by` comparator's primary `partial_cmp`
+                // returns `Equal`, the first `then_with(a.game.cmp(&b.game))`
+                // also returns `Equal`, and the second
+                // `then_with(a.name.cmp(&b.name))` is the one that finally
+                // breaks the tie. Exercises both `.then_with` arms (lines
+                // 390–391) — the existing aggregation test only differs on
+                // percent and never reaches them.
+                run_with_pinned_cache("rarest-ties", |_root| {
+                    let mut cache = AchievementCache::default();
+                    // Same percent, same game name (assigned via the games
+                    // vec below), different achievement names. The lex-smaller
+                    // achievement name ("Alpha") must win the tie-break.
+                    cache.set(101, 1111, 1, 10, Some(("Beta", 7.5)));
+                    cache.set(102, 1111, 1, 10, Some(("Alpha", 7.5)));
+                    cache.save();
+
+                    let games = models::OwnedGamesData {
+                        game_count: 2,
+                        games: vec![
+                            make_game(101, Some("Shared Title"), 1111),
+                            make_game(102, Some("Shared Title"), 1111),
+                        ],
+                    };
+
+                    let client = SteamClient::new("k".into(), "id".into());
+                    let Some(stats) = run_async(client.fetch_achievement_stats(&games)) else {
+                        return false; // race lost; retry
+                    };
+
+                    let rarest = stats.rarest.expect("two tied candidates -> Some");
+                    assert_eq!(rarest.name, "Alpha");
+                    assert_eq!(rarest.game, "Shared Title");
+                    assert!((rarest.percent - 7.5).abs() < f64::EPSILON);
+                    true
+                });
+            }
+        }
     }
 }
