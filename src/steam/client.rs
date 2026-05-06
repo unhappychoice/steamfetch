@@ -747,6 +747,37 @@ mod tests {
         spawn_tls_server(&[(request_path, body)], 1)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_spawn_tls_server_returns_none_when_openssl_fails() {
+        use std::env;
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = crate::test_support::lock_env();
+        let root = unique_temp_root("fake-openssl");
+        std::fs::create_dir_all(&root).expect("fake openssl dir should be created");
+        let openssl = root.join("openssl");
+        std::fs::write(&openssl, "#!/bin/sh\nexit 1\n").expect("fake openssl should be written");
+        let mut perms = std::fs::metadata(&openssl)
+            .expect("fake openssl metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&openssl, perms).expect("fake openssl should be executable");
+
+        let previous_path = env::var("PATH").ok();
+        env::set_var("PATH", &root);
+
+        let server = spawn_tls_server(&[], 1);
+
+        match previous_path {
+            Some(path) => env::set_var("PATH", path),
+            None => env::remove_var("PATH"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(server.is_none());
+    }
+
     fn unique_temp_root(label: &str) -> std::path::PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
 
