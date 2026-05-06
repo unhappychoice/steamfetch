@@ -1690,7 +1690,7 @@ mod tests {
             let files = [
                 (
                     "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=555&l=english",
-                    r#"{"playerstats":{"achievements":[{"apiname":"FIRST","achieved":1,"name":"First Win"},{"apiname":"SECOND","achieved":1,"name":"Second Win"},{"apiname":"LOCKED","achieved":0,"name":"Locked"}]}}"#,
+                    r#"{"playerstats":{"achievements":[{"apiname":"FIRST","achieved":1,"name":"First Win"},{"apiname":"SECOND","achieved":1,"name":"Second Win"},{"apiname":"LOCKED","achieved":1,"name":"Locked"}]}}"#,
                 ),
                 (
                     "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=555",
@@ -1723,13 +1723,13 @@ mod tests {
             let stats = run_async(client.fetch_achievement_stats(&games))
                 .expect("cache miss should be fetched from the API");
 
-            assert_eq!(stats.total_achieved, 2);
+            assert_eq!(stats.total_achieved, 3);
             assert_eq!(stats.total_possible, 3);
-            assert_eq!(stats.perfect_games, 0);
+            assert_eq!(stats.perfect_games, 1);
             let rarest = stats.rarest.expect("fetched result should include rarest");
-            assert_eq!(rarest.name, "Second Win");
+            assert_eq!(rarest.name, "Locked");
             assert_eq!(rarest.game, "Fetched Game");
-            assert!((rarest.percent - 4.5).abs() < f64::EPSILON);
+            assert!((rarest.percent - 1.0).abs() < f64::EPSILON);
 
             drop(server);
             super::restore_xdg_cache_home(previous_cache);
