@@ -888,6 +888,85 @@ mod tests {
     }
 
     #[test]
+    fn test_fetch_stats_for_appids_builds_success_response_from_filtered_api_data() {
+        let _guard = crate::test_support::lock_env();
+        let cache_root = unique_temp_root("fetch-stats-for-appids-success-cache");
+        let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+        std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+        let mut cache = crate::cache::AchievementCache::default();
+        cache.set(100, 1000, 2, 2, Some(("Native Rare", 4.0)));
+        cache.set(200, 2000, 1, 3, None);
+        cache.set(300, 0, 0, 1, Some(("Missing Game Rare", 2.0)));
+        cache.save();
+
+        let files = [
+            (
+                "ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id",
+                r#"{"response":{"players":[{"personaname":"Web User","timecreated":2222,"avatarfull":"https://example.test/native.png"}]}}"#,
+            ),
+            (
+                "IPlayerService/GetOwnedGames/v1/?key=k&steamid=id&include_appinfo=1&include_played_free_games=1&appids_filter%5B0%5D=100&appids_filter%5B1%5D=200&appids_filter%5B2%5D=300",
+                r#"{"response":{"game_count":2,"games":[{"appid":100,"name":"Native Game One","playtime_forever":90,"rtime_last_played":1000},{"appid":200,"name":"Native Game Two","playtime_forever":0,"rtime_last_played":2000}]}}"#,
+            ),
+            (
+                "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+                r#"{"response":{"player_level":7}}"#,
+            ),
+            (
+                "IPlayerService/GetRecentlyPlayedGames/v1/?key=k&steamid=id&count=5",
+                r#"{"response":{"games":[{"appid":200,"playtime_forever":0,"playtime_2weeks":15}]}}"#,
+            ),
+        ];
+        let Some(server) = spawn_tls_server(&files, files.len()) else {
+            restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let stats = run_async(client.fetch_stats_for_appids(&[100, 200, 300], "Native User"))
+            .expect("filtered stats response should parse");
+
+        assert_eq!(stats.username, "Native User");
+        assert_eq!(stats.game_count, 3);
+        assert_eq!(stats.unplayed_count, 1);
+        assert_eq!(stats.total_playtime_minutes, 90);
+        assert_eq!(stats.account_created, Some(2222));
+        assert_eq!(stats.steam_level, Some(7));
+        assert_eq!(
+            stats.avatar_url.as_deref(),
+            Some("https://example.test/native.png")
+        );
+        assert_eq!(stats.top_games[0].name, "Native Game One");
+        assert_eq!(stats.recently_played[0].name, "App 200");
+
+        let achievement_stats = stats.achievement_stats.expect("cached achievements");
+        assert_eq!(achievement_stats.total_achieved, 3);
+        assert_eq!(achievement_stats.total_possible, 6);
+        assert_eq!(achievement_stats.perfect_games, 1);
+        let rarest = achievement_stats.rarest.expect("rarest achievement");
+        assert_eq!(rarest.name, "Missing Game Rare");
+        assert_eq!(rarest.game, "App 300");
+
+        drop(server);
+        restore_xdg_cache_home(previous_cache);
+        let _ = std::fs::remove_dir_all(&cache_root);
+    }
+
+    #[test]
     fn test_detect_private_profile_no_games_key() {
         let body = r#"{"response":{"game_count":0}}"#;
         let result = detect_private_profile(body);
