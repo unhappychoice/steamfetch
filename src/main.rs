@@ -467,48 +467,63 @@ mod tests {
         }
 
         let _guard = crate::test_support::lock_env();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let addr = listener.local_addr().expect("local addr");
-        drop(listener);
-        let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+        let outer_all_proxy = env::var("ALL_PROXY").ok();
+        env::set_var("ALL_PROXY", "http://proxy-sentinel.invalid:9");
 
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path = env::temp_dir().join(format!(
-            "steamfetch-fetch-web-stats-valid-{}-{}.toml",
-            std::process::id(),
-            nanos
-        ));
-        std::fs::write(
-            &path,
-            r#"
+        let err = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let addr = listener.local_addr().expect("local addr");
+            drop(listener);
+            let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = env::temp_dir().join(format!(
+                "steamfetch-fetch-web-stats-valid-{}-{}.toml",
+                std::process::id(),
+                nanos
+            ));
+            std::fs::write(
+                &path,
+                r#"
 [api]
 steam_api_key = "test-key"
 steam_id = "76561197960265728"
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        let cli = Cli {
-            demo: false,
-            verbose: false,
-            config: Some(path.clone()),
-            config_path: false,
-            timeout: 1,
-            image: false,
-            image_protocol: ImageProtocol::Auto,
+            let cli = Cli {
+                demo: false,
+                verbose: false,
+                config: Some(path.clone()),
+                config_path: false,
+                timeout: 1,
+                image: false,
+                image_protocol: ImageProtocol::Auto,
+            };
+
+            let err = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(fetch_web_stats(&cli))
+                .expect_err("unreachable proxy should make fetch_stats fail");
+
+            let _ = std::fs::remove_file(&path);
+            err
         };
 
-        let err = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("rt")
-            .block_on(fetch_web_stats(&cli))
-            .expect_err("unreachable proxy should make fetch_stats fail");
-
-        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            env::var("ALL_PROXY").unwrap(),
+            "http://proxy-sentinel.invalid:9"
+        );
+        match outer_all_proxy {
+            Some(v) => env::set_var("ALL_PROXY", v),
+            None => env::remove_var("ALL_PROXY"),
+        }
 
         assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
     }
