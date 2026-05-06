@@ -730,6 +730,13 @@ mod tests {
             let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 4, 3);
             assert_eq!(rows, Some(3));
         }
+
+        #[test]
+        fn test_print_image_and_rewind_returns_none_when_output_fails() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 0, 3);
+            assert_eq!(rows, None);
+        }
     }
 
     mod env_tests {
