@@ -59,3 +59,27 @@ fn demo_flag_renders_demo_profile_without_config() {
     assert!(stdout.contains("Games:"));
     assert!(stdout.contains("Top Played"));
 }
+
+#[test]
+fn invalid_config_exits_before_network_request() {
+    let root = unique_temp_root("invalid-config");
+    std::fs::create_dir_all(&root).unwrap();
+    let config = root.join("config.toml");
+    std::fs::write(&config, "this is = not [valid toml").unwrap();
+
+    let output = Command::new(binary())
+        .arg("--config")
+        .arg(&config)
+        .env("HOME", &root)
+        .output()
+        .expect("steamfetch should run");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+
+    assert!(!output.status.success());
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("Failed to parse config file"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
