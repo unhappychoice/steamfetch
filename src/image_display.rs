@@ -536,6 +536,17 @@ mod tests {
         }
 
         #[test]
+        fn test_print_sixel_errors_when_rgba_buffer_is_too_short() {
+            let err = print_sixel(&[], 1, 1).expect_err("empty RGBA buffer should fail");
+            assert_eq!(err.kind(), io::ErrorKind::Other);
+
+            let err = print_sixel(&[255, 0, 0], 1, 1)
+                .expect_err("RGB-only buffer should fail without alpha");
+            assert_eq!(err.kind(), io::ErrorKind::Other);
+            assert!(!err.to_string().is_empty());
+        }
+
+        #[test]
         fn test_print_image_and_rewind_kitty_returns_input_rows() {
             let img = make_test_image(8, 8);
             let rows = print_image_and_rewind(&img, &ImageProtocol::Kitty, 4, 3);
