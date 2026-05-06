@@ -321,17 +321,9 @@ mod tests {
         // hit the web-stats path.
         use std::env;
         use std::path::PathBuf;
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        // $HOME mutation is process-global; serialize within this test
-        // module. Cross-module races with src/steam/native.rs's HOME
-        // manipulation are still possible, but every alternative HOME those
-        // tests install either has no steamclient files or only "stub" bytes
-        // that `Library::new` cannot dlopen, so the `None` arm of
-        // `fetch_stats` is reached either way.
-        static HOME_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_support::lock_env();
 
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
