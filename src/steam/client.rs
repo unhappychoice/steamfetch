@@ -846,6 +846,25 @@ mod tests {
     }
 
     #[test]
+    fn test_fetch_stats_for_appids_propagates_player_fetch_failure() {
+        let client = SteamClient {
+            client: Client::builder()
+                .timeout(Duration::from_secs(1))
+                .resolve("api.steampowered.com", unbound_localhost_addr())
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(1),
+        };
+
+        let err = run_async(client.fetch_stats_for_appids(&[1, 2], "native-user"))
+            .expect_err("player fetch should fail before appid filtering");
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+    }
+
+    #[test]
     fn test_print_status_does_not_panic() {
         // Writes a CR + clear-line escape + message to stderr; the
         // assertion is simply that it completes without panicking.
