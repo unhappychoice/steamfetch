@@ -406,6 +406,7 @@ mod tests {
         use std::env;
         use std::fs;
         use std::path::{Path, PathBuf};
+        use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         struct HomeScope {
@@ -598,6 +599,38 @@ mod tests {
                 .find(|p| p.exists())
         }
 
+        fn write_null_create_interface_lib(target: &Path) {
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let source = target.with_extension("rs");
+            fs::write(
+                &source,
+                r#"
+#[no_mangle]
+pub unsafe extern "C" fn CreateInterface(
+    _: *const std::os::raw::c_char,
+    _: *mut i32,
+) -> *mut std::os::raw::c_void {
+    std::ptr::null_mut()
+}
+"#,
+            )
+            .unwrap();
+
+            let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+            let output = Command::new(rustc)
+                .arg("--crate-type=cdylib")
+                .arg(&source)
+                .arg("-o")
+                .arg(target)
+                .output()
+                .expect("rustc should run");
+            assert!(
+                output.status.success(),
+                "rustc failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
         #[test]
         fn test_try_new_returns_none_when_create_interface_symbol_missing() {
             // `Library::new` succeeds (we symlink to a real, loadable system
@@ -624,6 +657,22 @@ mod tests {
                 .expect("symlink to system lib should succeed in tmp dir");
 
             assert!(NativeSteamClient::try_new(false).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_returns_null() {
+            // A tiny fake steamclient.so exports CreateInterface but returns a
+            // null pointer. That reaches the null-client branch after dlopen and
+            // symbol lookup both succeed, without calling any Steamworks APIs.
+            let _guard = lock_env();
+            let root = unique_root("create-iface-null");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            write_null_create_interface_lib(&target);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
 
             let _ = fs::remove_dir_all(&root);
         }
