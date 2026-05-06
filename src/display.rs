@@ -1062,6 +1062,32 @@ mod tests {
     }
 
     #[test]
+    fn test_build_info_lines_truncates_rarest_section_for_narrow_width() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 8,
+            total_possible: 10,
+            perfect_games: 1,
+            rarest: Some(RarestAchievement {
+                name: "A Very Long Achievement Name".to_string(),
+                game: "A Very Long Game Title".to_string(),
+                percent: 12.3,
+            }),
+        });
+
+        let lines = build_info_lines(&stats, 20);
+        let text = lines_text(&lines);
+        let rarest_line = text.lines().find(|line| line.contains("Rarest")).unwrap();
+        let game_line = text.lines().find(|line| line.contains("in ")).unwrap();
+
+        assert!(rarest_line.contains("..."));
+        assert!(rarest_line.contains("12.3%"));
+        assert!(game_line.contains("..."));
+        assert!(!rarest_line.contains("Achievement Name"));
+        assert!(!game_line.contains("Game Title"));
+    }
+
+    #[test]
     fn test_build_info_lines_with_recently_played_adds_section() {
         let mut stats = make_minimal_stats();
         stats.recently_played = vec![GameStat {
