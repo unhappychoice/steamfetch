@@ -1420,6 +1420,19 @@ mod tests {
         }
 
         #[test]
+        fn test_request_with_retry_preserves_empty_api_error_body() {
+            let (url, server) = spawn_n_shot_server(1, 418, "I'm a Teapot", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "empty-body"))
+                .expect_err("non-retryable 418 should produce an API error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::ApiError { status: 418, message } if message.is_empty()
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
         fn test_request_with_retry_defaults_api_error_body_when_read_fails() {
             // 400 enters classify_http_error's catch-all arm. The server
             // advertises a body and closes early, so response.text() fails and
