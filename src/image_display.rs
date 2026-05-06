@@ -1133,6 +1133,33 @@ mod tests {
         }
 
         #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            let _guard = lock_env();
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+
+        #[test]
         fn test_load_cached_or_download_fetches_and_saves_when_cache_miss() {
             // Empty cache + reachable HTTP server returning a real PNG →
             // exercises the `download_image(...).await?` and
