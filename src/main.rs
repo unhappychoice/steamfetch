@@ -263,6 +263,31 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parses_verbose_long_flag_with_other_options() {
+        let cli = Cli::try_parse_from([
+            "steamfetch",
+            "--verbose",
+            "--timeout",
+            "5",
+            "--image",
+            "--image-protocol",
+            "sixel",
+            "--config",
+            "/tmp/steamfetch.toml",
+        ])
+        .expect("long verbose and related options should parse");
+
+        assert!(cli.verbose);
+        assert_eq!(cli.timeout, 5);
+        assert!(cli.image);
+        assert!(matches!(cli.image_protocol, ImageProtocol::Sixel));
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/tmp/steamfetch.toml"))
+        );
+    }
+
+    #[test]
     fn test_cli_parses_config_path_flag() {
         let cli = Cli::try_parse_from(["steamfetch", "--config-path"])
             .expect("--config-path should parse");
