@@ -288,6 +288,31 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parses_demo_with_image_options() {
+        let cli = Cli::try_parse_from([
+            "steamfetch",
+            "--demo",
+            "--image",
+            "--image-protocol",
+            "iterm",
+            "--timeout",
+            "9",
+            "--config",
+            "/tmp/demo.toml",
+        ])
+        .expect("demo with image options should parse");
+
+        assert!(cli.demo);
+        assert!(cli.image);
+        assert!(matches!(cli.image_protocol, ImageProtocol::Iterm));
+        assert_eq!(cli.timeout, 9);
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/tmp/demo.toml"))
+        );
+    }
+
+    #[test]
     fn test_cli_parses_config_path_flag() {
         let cli = Cli::try_parse_from(["steamfetch", "--config-path"])
             .expect("--config-path should parse");
@@ -333,6 +358,17 @@ mod tests {
     #[test]
     fn test_cli_rejects_unknown_image_protocol() {
         assert!(Cli::try_parse_from(["steamfetch", "--image-protocol", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_rejects_missing_option_values() {
+        for args in [
+            ["steamfetch", "--timeout"],
+            ["steamfetch", "--config"],
+            ["steamfetch", "--image-protocol"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
     }
 
     #[test]
@@ -562,6 +598,109 @@ steam_id = "76561197960265728"
             Some(v) => env::set_var("ALL_PROXY", v),
             None => env::remove_var("ALL_PROXY"),
         }
+
+        assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
+    }
+
+    #[test]
+    fn test_fetch_web_stats_uses_env_credentials_before_client_error() {
+        use std::env;
+
+        const PROXY_VARS: &[&str] = &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        struct ProxyEnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl ProxyEnvScope {
+            fn set_unreachable_proxy(url: &str) -> Self {
+                let saved = PROXY_VARS
+                    .iter()
+                    .map(|&key| {
+                        let prev = env::var(key).ok();
+                        env::remove_var(key);
+                        (key, prev)
+                    })
+                    .collect();
+
+                env::set_var("HTTPS_PROXY", url);
+                env::set_var("https_proxy", url);
+                env::set_var("ALL_PROXY", url);
+                env::set_var("all_proxy", url);
+                env::set_var("NO_PROXY", "127.0.0.1,localhost");
+                env::set_var("no_proxy", "127.0.0.1,localhost");
+
+                Self { saved }
+            }
+        }
+
+        impl Drop for ProxyEnvScope {
+            fn drop(&mut self) {
+                for (key, value) in &self.saved {
+                    match value {
+                        Some(v) => env::set_var(key, v),
+                        None => env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        fn restore_env(key: &str, value: Option<String>) {
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+        }
+
+        let _guard = crate::test_support::lock_env();
+        let original_api_key = env::var("STEAM_API_KEY").ok();
+        let original_steam_id = env::var("STEAM_ID").ok();
+        env::set_var("STEAM_API_KEY", "env-test-key");
+        env::set_var("STEAM_ID", "76561197960265728");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let proxy_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        drop(listener);
+        let _proxy = ProxyEnvScope::set_unreachable_proxy(&proxy_url);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = env::temp_dir().join(format!(
+            "steamfetch-fetch-web-stats-env-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, "").unwrap();
+
+        let cli = Cli {
+            demo: false,
+            verbose: true,
+            config: Some(path.clone()),
+            config_path: false,
+            timeout: 1,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(fetch_web_stats(&cli))
+            .expect_err("unreachable proxy should make env-backed fetch fail");
+
+        let _ = std::fs::remove_file(&path);
+        restore_env("STEAM_API_KEY", original_api_key);
+        restore_env("STEAM_ID", original_steam_id);
 
         assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
     }
