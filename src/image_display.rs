@@ -543,6 +543,19 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn test_query_cell_size_escape_returns_none_when_tty_size_has_no_rows() {
+        let size = libc::winsize {
+            ws_row: 0,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let result = query_cell_size_result_from_response_with_size(b"", false, size, false);
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn test_query_cell_size_uses_escape_fallback_when_ioctl_has_no_pixels() {
         let result = query_cell_size_result_from_response(b"\x1b[4;480;800t", true);
         assert_eq!(result, "10,20");
@@ -555,6 +568,22 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn query_cell_size_result_from_response(response: &[u8], use_query_cell_size: bool) -> String {
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        query_cell_size_result_from_response_with_size(response, use_query_cell_size, size, true)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_result_from_response_with_size(
+        response: &[u8],
+        use_query_cell_size: bool,
+        size: libc::winsize,
+        expect_query: bool,
+    ) -> String {
         use std::io::Read;
         use std::os::fd::FromRawFd;
         use std::os::unix::process::CommandExt;
@@ -562,12 +591,6 @@ mod tests {
 
         let mut master = -1;
         let mut slave = -1;
-        let size = libc::winsize {
-            ws_row: 24,
-            ws_col: 80,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
         let opened = unsafe {
             libc::openpty(
                 &mut master,
@@ -620,18 +643,20 @@ mod tests {
             libc::close(pipe_fds[1]);
         }
 
-        let mut query = [0u8; 16];
-        let n = unsafe { libc::read(master, query.as_mut_ptr() as *mut _, query.len()) };
-        assert!(n > 0, "child should write the terminal query");
-        assert!(std::str::from_utf8(&query[..n as usize])
-            .expect("query should be utf8")
-            .contains("\x1b[14t"));
+        if expect_query {
+            let mut query = [0u8; 16];
+            let n = unsafe { libc::read(master, query.as_mut_ptr() as *mut _, query.len()) };
+            assert!(n > 0, "child should write the terminal query");
+            assert!(std::str::from_utf8(&query[..n as usize])
+                .expect("query should be utf8")
+                .contains("\x1b[14t"));
 
-        assert_eq!(
-            unsafe { libc::write(master, response.as_ptr() as *const _, response.len()) },
-            response.len() as isize,
-            "terminal response should be written"
-        );
+            assert_eq!(
+                unsafe { libc::write(master, response.as_ptr() as *const _, response.len()) },
+                response.len() as isize,
+                "terminal response should be written"
+            );
+        }
 
         let mut result = String::new();
         let mut pipe = unsafe { std::fs::File::from_raw_fd(pipe_fds[0]) };
