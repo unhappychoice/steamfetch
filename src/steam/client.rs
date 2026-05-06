@@ -1680,6 +1680,62 @@ mod tests {
             assert!((rarest.percent - 3.0).abs() < f64::EPSILON);
         }
 
+        #[test]
+        fn test_fetch_achievement_stats_fetches_cache_misses_from_api() {
+            let _guard = crate::test_support::lock_env();
+            let cache_root = super::unique_temp_root("achievement-cache-miss");
+            let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+            std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=555&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"FIRST","achieved":1,"name":"First Win"},{"apiname":"SECOND","achieved":1,"name":"Second Win"},{"apiname":"LOCKED","achieved":0,"name":"Locked"}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=555",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"FIRST","percent":20.0},{"name":"SECOND","percent":4.5},{"name":"LOCKED","percent":1.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                super::restore_xdg_cache_home(previous_cache);
+                let _ = std::fs::remove_dir_all(&cache_root);
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 1,
+                games: vec![super::make_game(555, Some("Fetched Game"), 9876)],
+            };
+
+            let stats = run_async(client.fetch_achievement_stats(&games))
+                .expect("cache miss should be fetched from the API");
+
+            assert_eq!(stats.total_achieved, 2);
+            assert_eq!(stats.total_possible, 3);
+            assert_eq!(stats.perfect_games, 0);
+            let rarest = stats.rarest.expect("fetched result should include rarest");
+            assert_eq!(rarest.name, "Second Win");
+            assert_eq!(rarest.game, "Fetched Game");
+            assert!((rarest.percent - 4.5).abs() < f64::EPSILON);
+
+            drop(server);
+            super::restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+        }
+
         #[cfg(target_os = "linux")]
         mod cache_hit_tests {
             use super::super::super::*;
