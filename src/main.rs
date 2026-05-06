@@ -670,8 +670,10 @@ steam_id = "76561197960265728"
         }
 
         let _guard = crate::test_support::lock_env();
-        let original_api_key = env::var("STEAM_API_KEY").ok();
+        let outer_api_key = env::var("STEAM_API_KEY").ok();
         let original_steam_id = env::var("STEAM_ID").ok();
+        env::set_var("STEAM_API_KEY", "outer-env-key");
+        let original_api_key = env::var("STEAM_API_KEY").ok();
         env::set_var("STEAM_API_KEY", "env-test-key");
         env::set_var("STEAM_ID", "76561197960265728");
 
@@ -711,6 +713,7 @@ steam_id = "76561197960265728"
         let _ = std::fs::remove_file(&path);
         restore_env("STEAM_API_KEY", original_api_key);
         restore_env("STEAM_ID", original_steam_id);
+        restore_env("STEAM_API_KEY", outer_api_key);
 
         assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
     }
