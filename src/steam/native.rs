@@ -325,6 +325,14 @@ fn parse_games_xml(xml: &str) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    fn run_async<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(f)
+    }
+
     #[test]
     fn test_parse_games_xml() {
         let xml = r#"<?xml version="1.0"?><games><game>220</game><game>240</game><game type="junk">480</game></games>"#;
@@ -397,6 +405,70 @@ mod tests {
         // Larger than u32::MAX — parse fails, entry skipped.
         let xml = "<games><game>9999999999999</game><game>20</game></games>";
         assert_eq!(parse_games_xml(xml), vec![20]);
+    }
+
+    #[test]
+    fn test_fetch_all_game_appids_propagates_fetch_error() {
+        use crate::test_support::lock_env;
+        use std::env;
+
+        const PROXY_VARS: &[&str] = &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        struct EnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl EnvScope {
+            fn set_unreachable_proxy(url: &str) -> Self {
+                let saved = PROXY_VARS
+                    .iter()
+                    .map(|&key| {
+                        let prev = env::var(key).ok();
+                        env::remove_var(key);
+                        (key, prev)
+                    })
+                    .collect();
+
+                env::set_var("HTTPS_PROXY", url);
+                env::set_var("https_proxy", url);
+                env::set_var("NO_PROXY", "127.0.0.1,localhost");
+                env::set_var("no_proxy", "127.0.0.1,localhost");
+
+                Self { saved }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                for (key, value) in &self.saved {
+                    match value {
+                        Some(v) => env::set_var(key, v),
+                        None => env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        let _guard = lock_env();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+
+        let err = run_async(fetch_all_game_appids())
+            .expect_err("unreachable HTTPS proxy should make games.xml fetch fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to fetch games.xml"),
+            "expected fetch context, got: {msg}",
+        );
     }
 
     #[cfg(target_os = "linux")]
