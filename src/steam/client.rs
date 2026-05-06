@@ -1713,6 +1713,46 @@ mod tests {
         }
 
         #[test]
+        fn test_fetch_game_achievements_returns_zero_counts_for_empty_list() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=654&l=english",
+                    r#"{"playerstats":{"achievements":[]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=654",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"UNUSED","percent":1.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(654, "Game 654".to_string()))
+                .expect("empty achievement list should still produce counts");
+            let counts = (result.achieved, result.total);
+            let expected_counts = (0, 0);
+            let has_rarest = result.rarest.is_some();
+
+            assert_eq!(counts, expected_counts);
+            assert!(!has_rarest);
+        }
+
+        #[test]
         fn test_fetch_achievement_stats_fetches_cache_misses_from_api() {
             let _guard = crate::test_support::lock_env();
             let cache_root = super::unique_temp_root("achievement-cache-miss");
