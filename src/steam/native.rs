@@ -678,6 +678,26 @@ pub unsafe extern "C" fn CreateInterface(
         }
 
         #[test]
+        fn test_null_native_handles_return_fallback_values() {
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+            let lib = unsafe { Library::new(real_lib).expect("system library should load") };
+            let client = std::mem::ManuallyDrop::new(NativeSteamClient {
+                _lib: lib,
+                client: std::ptr::null_mut(),
+                pipe: 0,
+                user: 0,
+                apps: std::ptr::null_mut(),
+                friends: std::ptr::null_mut(),
+                steam_user: std::ptr::null_mut(),
+            });
+
+            assert_eq!(client.steam_id(), 0);
+            assert_eq!(client.username(), "Unknown");
+        }
+
+        #[test]
         fn test_try_new_returns_none_when_create_interface_symbol_missing_verbose() {
             // Same CreateInterface-missing path with verbose=true — exercises
             // both the "Found Steam client at" log and the "Failed to get
