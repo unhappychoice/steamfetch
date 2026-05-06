@@ -1639,6 +1639,47 @@ mod tests {
             assert!(result.is_none());
         }
 
+        #[test]
+        fn test_fetch_game_achievements_builds_counts_and_rarest_from_api_data() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=123&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"Named One"},{"apiname":"ACH_TWO","achieved":0,"name":"Locked"},{"apiname":"ach_three","achieved":1,"name":null}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=123",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"ACH_ONE","percent":12.5},{"name":"ACH_THREE","percent":3.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(123, "Game 123".to_string()))
+                .expect("achievement responses should produce a result");
+
+            assert_eq!(result.achieved, 2);
+            assert_eq!(result.total, 3);
+            let rarest = result.rarest.expect("achieved item has percentage data");
+            assert_eq!(rarest.name, "ach_three");
+            assert_eq!(rarest.game, "Game 123");
+            assert!((rarest.percent - 3.0).abs() < f64::EPSILON);
+        }
+
         #[cfg(target_os = "linux")]
         mod cache_hit_tests {
             use super::super::super::*;
