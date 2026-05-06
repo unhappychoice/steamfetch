@@ -1004,6 +1004,39 @@ mod tests {
         }
 
         #[test]
+        fn test_request_with_retry_defaults_api_error_body_when_read_fails() {
+            // 400 enters classify_http_error's catch-all arm. The server
+            // advertises a body and closes early, so response.text() fails and
+            // unwrap_or_default supplies the empty message.
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                }
+            });
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(2);
+            let err = run_async(client.request_with_retry(&url, "truncated-400"))
+                .expect_err("truncated 400 body should still classify as ApiError");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 400);
+                    assert!(message.is_empty());
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
         fn test_request_with_retry_exhausts_retries_on_429() {
             // 429 → RateLimited (retryable). All 3 attempts fail, so the
             // loop completes and the last error is returned.
