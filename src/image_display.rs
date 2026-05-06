@@ -462,6 +462,60 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn test_query_cell_size_ioctl_uses_stdout_pixel_dimensions() {
+        struct StdoutGuard {
+            saved_stdout: i32,
+            master: i32,
+            slave: i32,
+        }
+
+        impl Drop for StdoutGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::dup2(self.saved_stdout, libc::STDOUT_FILENO);
+                    libc::close(self.saved_stdout);
+                    libc::close(self.slave);
+                    libc::close(self.master);
+                }
+            }
+        }
+
+        let mut master = -1;
+        let mut slave = -1;
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 800,
+            ws_ypixel: 384,
+        };
+
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &size,
+            )
+        };
+        assert_eq!(opened, 0, "openpty should create a pseudo terminal");
+
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved_stdout >= 0, "stdout should be duplicated");
+        let _guard = StdoutGuard {
+            saved_stdout,
+            master,
+            slave,
+        };
+
+        unsafe {
+            libc::dup2(slave, libc::STDOUT_FILENO);
+        }
+        assert_eq!(query_cell_size(), (10, 16));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_query_cell_size_escape_does_not_panic_without_tty_response() {
         let _ = query_cell_size_escape();
     }
