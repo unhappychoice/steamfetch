@@ -1754,6 +1754,78 @@ mod tests {
         }
 
         #[test]
+        fn test_fetch_game_achievements_returns_none_when_player_json_is_malformed() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=987&l=english",
+                    r#"{"playerstats":{"achievements":["#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=987",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"ACH_ONE","percent":7.5}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(987, "Game 987".to_string()));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_fetch_game_achievements_ignores_malformed_global_json() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=988&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"One"},{"apiname":"ACH_TWO","achieved":0,"name":"Two"}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=988",
+                    r#"{"achievementpercentages":{"achievements":["#,
+                ),
+            ];
+            let server = match super::spawn_tls_server(&files, files.len()) {
+                Some(server) => server,
+                None => return,
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(988, "Game 988".to_string()))
+                .expect("player achievements should still provide counts");
+            assert_eq!(result.achieved, 1);
+            assert_eq!(result.total, 2);
+            assert!(result.rarest.is_none());
+        }
+
+        #[test]
         fn test_fetch_game_achievements_returns_zero_counts_for_empty_list() {
             let _guard = crate::test_support::lock_env();
             let files = [
