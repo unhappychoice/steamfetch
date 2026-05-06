@@ -607,6 +607,30 @@ steam_api_key = "file-key"
         }
 
         #[test]
+        fn test_load_config_file_none_uses_default_config_path() {
+            // With no custom path, load_config_file should resolve the default
+            // config path from XDG_CONFIG_HOME and create the default file
+            // there when it does not already exist.
+            let _guard = lock_env();
+            let root = unique_path("xdg-config-home");
+            let _xdg = EnvScope::set("XDG_CONFIG_HOME", &root.to_string_lossy());
+
+            let cfg = load_config_file(None).expect("missing default config should be created");
+            assert!(cfg.api.steam_api_key.is_none());
+            assert!(cfg.api.steam_id.is_none());
+            assert_eq!(cfg.display.show_top_games, 5);
+            assert!(cfg.display.show_recently_played);
+
+            let path = root.join("steamfetch/config.toml");
+            assert!(path.exists());
+            assert_eq!(config_path().as_deref(), Some(path.as_path()));
+
+            let _ = fs::remove_file(&path);
+            let _ = fs::remove_dir(path.parent().unwrap());
+            let _ = fs::remove_dir(&root);
+        }
+
+        #[test]
         fn test_envscope_drop_restores_previous_value_when_present() {
             // The other tests in this module always start with the env var
             // unset, so EnvScope::Drop's `None` arm is the only one ever hit.
