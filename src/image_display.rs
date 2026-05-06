@@ -535,7 +535,19 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_uses_escape_fallback_when_ioctl_has_no_pixels() {
+        let result = query_cell_size_result_from_response(b"\x1b[4;480;800t", true);
+        assert_eq!(result, "10,20");
+    }
+
+    #[cfg(target_os = "linux")]
     fn query_cell_size_escape_result_from_response(response: &[u8]) -> String {
+        query_cell_size_result_from_response(response, false)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_result_from_response(response: &[u8], use_query_cell_size: bool) -> String {
         use std::io::Read;
         use std::os::fd::FromRawFd;
         use std::os::unix::process::CommandExt;
@@ -576,6 +588,10 @@ mod tests {
                 .env(
                     "STEAMFETCH_QUERY_CELL_SIZE_RESULT_FD",
                     pipe_fds[1].to_string(),
+                )
+                .env(
+                    "STEAMFETCH_QUERY_CELL_SIZE_USE_WRAPPER",
+                    if use_query_cell_size { "1" } else { "0" },
                 )
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -634,9 +650,17 @@ mod tests {
             return;
         };
         let fd: i32 = fd.parse().expect("result fd should be an integer");
-        let result = query_cell_size_escape()
-            .map(|(w, h)| format!("{},{}", w, h))
-            .unwrap_or_else(|| "none".to_string());
+        let result = if std::env::var("STEAMFETCH_QUERY_CELL_SIZE_USE_WRAPPER")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            Some(query_cell_size())
+        } else {
+            query_cell_size_escape()
+        }
+        .map(|(w, h)| format!("{},{}", w, h))
+        .unwrap_or_else(|| "none".to_string());
         let mut pipe = unsafe { std::fs::File::from_raw_fd(fd) };
         pipe.write_all(result.as_bytes())
             .expect("result should be written");
