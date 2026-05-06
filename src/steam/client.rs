@@ -1681,6 +1681,38 @@ mod tests {
         }
 
         #[test]
+        fn test_fetch_game_achievements_keeps_counts_when_global_percentages_fail() {
+            let _guard = crate::test_support::lock_env();
+            let files = [(
+                "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=321&l=english",
+                r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"Named One"},{"apiname":"ACH_TWO","achieved":0,"name":"Locked"}]}}"#,
+            )];
+            let Some(server) = super::spawn_tls_server(&files, 2) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(321, "Game 321".to_string()))
+                .expect("player achievement response should still produce a result");
+
+            assert_eq!(result.achieved, 1);
+            assert_eq!(result.total, 2);
+            assert!(result.rarest.is_none());
+        }
+
+        #[test]
         fn test_fetch_achievement_stats_fetches_cache_misses_from_api() {
             let _guard = crate::test_support::lock_env();
             let cache_root = super::unique_temp_root("achievement-cache-miss");
