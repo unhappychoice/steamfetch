@@ -523,6 +523,19 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_query_cell_size_escape_parses_terminal_response() {
+        let result = query_cell_size_escape_result_from_response(b"\x1b[4;480;800t");
+        assert_eq!(result, "10,20");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_returns_none_for_zero_pixel_response() {
+        let result = query_cell_size_escape_result_from_response(b"\x1b[4;0;800t");
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_escape_result_from_response(response: &[u8]) -> String {
         use std::io::Read;
         use std::os::fd::FromRawFd;
         use std::os::unix::process::CommandExt;
@@ -591,7 +604,6 @@ mod tests {
             .expect("query should be utf8")
             .contains("\x1b[14t"));
 
-        let response = b"\x1b[4;480;800t";
         assert_eq!(
             unsafe { libc::write(master, response.as_ptr() as *const _, response.len()) },
             response.len() as isize,
@@ -609,7 +621,7 @@ mod tests {
         let status = child.wait().expect("child test process should exit");
 
         assert!(status.success(), "child should exit normally");
-        assert_eq!(result, "10,20");
+        result
     }
 
     #[cfg(target_os = "linux")]
