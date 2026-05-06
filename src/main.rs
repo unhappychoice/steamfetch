@@ -333,6 +333,16 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_rejects_invalid_timeout_values() {
+        [
+            ["steamfetch", "--timeout", "not-a-number"],
+            ["steamfetch", "--timeout", "-1"],
+        ]
+        .into_iter()
+        .for_each(|args| assert!(Cli::try_parse_from(args).is_err()));
+    }
+
+    #[test]
     fn test_cli_parses_image_with_protocol() {
         let cli = Cli::try_parse_from(["steamfetch", "--image", "--image-protocol", "kitty"])
             .expect("image flags should parse");
