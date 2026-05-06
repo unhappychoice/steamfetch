@@ -415,4 +415,101 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn test_fetch_web_stats_propagates_client_fetch_error_after_valid_config() {
+        use std::env;
+
+        const PROXY_VARS: &[&str] = &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        struct EnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl EnvScope {
+            fn set_unreachable_proxy(url: &str) -> Self {
+                let saved = PROXY_VARS
+                    .iter()
+                    .map(|&key| {
+                        let prev = env::var(key).ok();
+                        env::remove_var(key);
+                        (key, prev)
+                    })
+                    .collect();
+
+                env::set_var("HTTPS_PROXY", url);
+                env::set_var("https_proxy", url);
+                env::set_var("ALL_PROXY", url);
+                env::set_var("all_proxy", url);
+                env::set_var("NO_PROXY", "127.0.0.1,localhost");
+                env::set_var("no_proxy", "127.0.0.1,localhost");
+
+                Self { saved }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                for (key, value) in &self.saved {
+                    match value {
+                        Some(v) => env::set_var(key, v),
+                        None => env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        let _guard = crate::test_support::lock_env();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = env::temp_dir().join(format!(
+            "steamfetch-fetch-web-stats-valid-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(
+            &path,
+            r#"
+[api]
+steam_api_key = "test-key"
+steam_id = "76561197960265728"
+"#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            demo: false,
+            verbose: false,
+            config: Some(path.clone()),
+            config_path: false,
+            timeout: 1,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(fetch_web_stats(&cli))
+            .expect_err("unreachable proxy should make fetch_stats fail");
+
+        let _ = std::fs::remove_file(&path);
+
+        assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
+    }
 }
