@@ -1768,6 +1768,38 @@ mod tests {
             let _ = std::fs::remove_dir_all(&cache_root);
         }
 
+        #[test]
+        fn test_fetch_achievement_stats_skips_game_when_player_achievements_fail() {
+            let _guard = crate::test_support::lock_env();
+            let cache_root = super::unique_temp_root("achievement-player-fetch-fail");
+            let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+            std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(1))
+                    .resolve("api.steampowered.com", super::unbound_localhost_addr())
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(1),
+            };
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 1,
+                games: vec![super::make_game(777, Some("Unavailable Game"), 0)],
+            };
+
+            let stats = run_async(client.fetch_achievement_stats(&games));
+
+            super::restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+
+            assert!(stats.is_none());
+        }
+
         #[cfg(target_os = "linux")]
         mod cache_hit_tests {
             use super::super::super::*;
