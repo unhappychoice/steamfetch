@@ -891,6 +891,45 @@ mod tests {
         });
     }
 
+    mod fetch_optional_details_tests {
+        use super::super::*;
+        use std::net::{SocketAddr, TcpListener};
+
+        fn run_async<F: std::future::Future>(f: F) -> F::Output {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(f)
+        }
+
+        fn unbound_localhost_addr() -> SocketAddr {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let addr = listener.local_addr().expect("local_addr");
+            drop(listener);
+            addr
+        }
+
+        #[test]
+        fn test_fetch_optional_details_returns_empty_values_when_requests_fail() {
+            let client = SteamClient {
+                client: Client::builder()
+                    .timeout(Duration::from_secs(1))
+                    .resolve("api.steampowered.com", unbound_localhost_addr())
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: true,
+                timeout: Duration::from_secs(1),
+            };
+            let (level, recently_played) = run_async(client.fetch_optional_details());
+
+            assert!(level.is_none());
+            assert!(recently_played.is_empty());
+        }
+    }
+
     mod request_with_retry_tests {
         use super::super::*;
         use std::io::{Read, Write};
