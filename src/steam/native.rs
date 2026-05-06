@@ -393,6 +393,29 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_games_xml_recovers_after_malformed_game_tag() {
+        let xml = "<games><game>broken<game>480</game><game>730</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![730]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_preserves_ordered_edge_cases() {
+        [
+            (
+                "<games><game>10</game><game>20</game><game>10</game></games>",
+                vec![10, 20, 10],
+            ),
+            (
+                r#"<games><game data-id="x">30</game><games><game>40</game></games>"#,
+                vec![30, 40],
+            ),
+            ("noise <game>50</game> tail <game>60</game>", vec![50, 60]),
+        ]
+        .into_iter()
+        .for_each(|(xml, expected)| assert_eq!(parse_games_xml(xml), expected));
+    }
+
+    #[test]
     fn test_parse_games_xml_multiple_games_wrappers_handled() {
         // Two `<games>` wrappers in sequence should both be skipped
         // without producing spurious entries.
