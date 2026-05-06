@@ -520,6 +520,116 @@ mod tests {
         let _ = query_cell_size_escape();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_parses_terminal_response() {
+        use std::io::Read;
+        use std::os::fd::FromRawFd;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut master = -1;
+        let mut slave = -1;
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &size,
+            )
+        };
+        assert_eq!(opened, 0, "openpty should create a pseudo terminal");
+
+        let mut pipe_fds = [-1, -1];
+        assert_eq!(
+            unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+            0,
+            "pipe should be created"
+        );
+
+        let mut child = unsafe {
+            let mut command = Command::new(std::env::current_exe().expect("current test binary"));
+            command
+                .arg("--exact")
+                .arg("image_display::tests::query_cell_size_escape_child_process")
+                .arg("--nocapture")
+                .env(
+                    "STEAMFETCH_QUERY_CELL_SIZE_RESULT_FD",
+                    pipe_fds[1].to_string(),
+                )
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .pre_exec(move || {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::ioctl(slave, libc::TIOCSCTTY, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            command.spawn().expect("child test process should spawn")
+        };
+
+        unsafe {
+            libc::close(slave);
+            libc::close(pipe_fds[1]);
+        }
+
+        let mut query = [0u8; 16];
+        let n = unsafe { libc::read(master, query.as_mut_ptr() as *mut _, query.len()) };
+        assert!(n > 0, "child should write the terminal query");
+        assert!(std::str::from_utf8(&query[..n as usize])
+            .expect("query should be utf8")
+            .contains("\x1b[14t"));
+
+        let response = b"\x1b[4;480;800t";
+        assert_eq!(
+            unsafe { libc::write(master, response.as_ptr() as *const _, response.len()) },
+            response.len() as isize,
+            "terminal response should be written"
+        );
+
+        let mut result = String::new();
+        let mut pipe = unsafe { std::fs::File::from_raw_fd(pipe_fds[0]) };
+        pipe.read_to_string(&mut result)
+            .expect("child result should be readable");
+
+        unsafe {
+            libc::close(master);
+        }
+        let status = child.wait().expect("child test process should exit");
+
+        assert!(status.success(), "child should exit normally");
+        assert_eq!(result, "10,20");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn query_cell_size_escape_child_process() {
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+
+        let Ok(fd) = std::env::var("STEAMFETCH_QUERY_CELL_SIZE_RESULT_FD") else {
+            return;
+        };
+        let fd: i32 = fd.parse().expect("result fd should be an integer");
+        let result = query_cell_size_escape()
+            .map(|(w, h)| format!("{},{}", w, h))
+            .unwrap_or_else(|| "none".to_string());
+        let mut pipe = unsafe { std::fs::File::from_raw_fd(fd) };
+        pipe.write_all(result.as_bytes())
+            .expect("result should be written");
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_query_cell_size_uses_default_without_terminal_size() {
