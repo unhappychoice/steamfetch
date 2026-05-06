@@ -643,21 +643,21 @@ mod tests {
     struct TlsOneShotServer {
         addr: std::net::SocketAddr,
         child: std::process::Child,
-        stdin: Option<std::process::ChildStdin>,
         root: std::path::PathBuf,
     }
 
     impl Drop for TlsOneShotServer {
         fn drop(&mut self) {
-            drop(self.stdin.take());
             let _ = self.child.kill();
             let _ = self.child.wait();
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
 
-    fn spawn_tls_one_shot_server(body: &'static str) -> Option<TlsOneShotServer> {
-        use std::io::Write;
+    fn spawn_tls_server(
+        files: &[(&'static str, &'static str)],
+        accepted_connections: usize,
+    ) -> Option<TlsOneShotServer> {
         use std::process::{Command, Stdio};
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -701,15 +701,25 @@ mod tests {
         let addr = listener.local_addr().expect("local_addr");
         drop(listener);
 
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        let mut child = Command::new("openssl")
+        for (request_path, body) in files {
+            let response_path = root.join(request_path);
+            std::fs::create_dir_all(response_path.parent()?).ok()?;
+            std::fs::write(
+                &response_path,
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
+                    body
+                ),
+            )
+            .ok()?;
+        }
+
+        let accepted_connections = accepted_connections.to_string();
+        let child = Command::new("openssl")
             .args([
                 "s_server",
                 "-quiet",
+                "-HTTP",
                 "-accept",
                 &addr.port().to_string(),
                 "-cert",
@@ -717,24 +727,46 @@ mod tests {
                 "-key",
                 key.to_str()?,
                 "-naccept",
-                "1",
+                &accepted_connections,
             ])
-            .stdin(Stdio::piped())
+            .current_dir(&root)
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .ok()?;
-        let mut stdin = child.stdin.take()?;
-        stdin.write_all(response.as_bytes()).ok()?;
-        stdin.flush().ok()?;
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_secs(1));
 
-        Some(TlsOneShotServer {
-            addr,
-            child,
-            stdin: Some(stdin),
-            root,
-        })
+        Some(TlsOneShotServer { addr, child, root })
+    }
+
+    fn spawn_tls_one_shot_server(
+        request_path: &'static str,
+        body: &'static str,
+    ) -> Option<TlsOneShotServer> {
+        spawn_tls_server(&[(request_path, body)], 1)
+    }
+
+    fn unique_temp_root(label: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "steamfetch-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn restore_xdg_cache_home(previous: Option<String>) {
+        match previous {
+            Some(value) => std::env::set_var("XDG_CACHE_HOME", value),
+            None => std::env::remove_var("XDG_CACHE_HOME"),
+        }
     }
 
     #[test]
@@ -755,7 +787,9 @@ mod tests {
     fn test_fetch_player_parses_success_response() {
         let _guard = crate::test_support::lock_env();
         let body = r#"{"response":{"players":[{"personaname":"TLS User","timecreated":1234567890,"avatarfull":"https://example.test/avatar.png"}]}}"#;
-        let Some(server) = spawn_tls_one_shot_server(body) else {
+        let Some(server) =
+            spawn_tls_one_shot_server("ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id", body)
+        else {
             return;
         };
         let client = SteamClient {
@@ -780,6 +814,77 @@ mod tests {
             player.avatarfull.as_deref(),
             Some("https://example.test/avatar.png")
         );
+    }
+
+    #[test]
+    fn test_fetch_stats_builds_success_response_from_api_data() {
+        let _guard = crate::test_support::lock_env();
+        let cache_root = unique_temp_root("fetch-stats-success-cache");
+        let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+        std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+        let mut cache = crate::cache::AchievementCache::default();
+        cache.set(100, 1000, 1, 2, Some(("Rare One", 3.5)));
+        cache.set(200, 2000, 0, 2, None);
+        cache.save();
+
+        let files = [
+            (
+                "ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id",
+                r#"{"response":{"players":[{"personaname":"TLS User","timecreated":1234567890,"avatarfull":"https://example.test/avatar.png"}]}}"#,
+            ),
+            (
+                "IPlayerService/GetOwnedGames/v1/?key=k&steamid=id&include_appinfo=1&include_played_free_games=1",
+                r#"{"response":{"game_count":2,"games":[{"appid":100,"name":"Game One","playtime_forever":120,"rtime_last_played":1000},{"appid":200,"name":"Game Two","playtime_forever":0,"rtime_last_played":2000}]}}"#,
+            ),
+            (
+                "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+                r#"{"response":{"player_level":42}}"#,
+            ),
+            (
+                "IPlayerService/GetRecentlyPlayedGames/v1/?key=k&steamid=id&count=5",
+                r#"{"response":{"games":[{"appid":100,"name":"Game One","playtime_forever":120,"playtime_2weeks":30}]}}"#,
+            ),
+        ];
+        let Some(server) = spawn_tls_server(&files, files.len()) else {
+            restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let stats = run_async(client.fetch_stats()).expect("stats response should parse");
+
+        assert_eq!(stats.username, "TLS User");
+        assert_eq!(stats.game_count, 2);
+        assert_eq!(stats.unplayed_count, 1);
+        assert_eq!(stats.total_playtime_minutes, 120);
+        assert_eq!(stats.steam_level, Some(42));
+        assert_eq!(stats.recently_played[0].name, "Game One");
+        assert_eq!(stats.top_games[0].name, "Game One");
+        let achievement_stats = stats.achievement_stats.expect("cached achievements");
+        assert_eq!(achievement_stats.total_achieved, 1);
+        assert_eq!(achievement_stats.total_possible, 4);
+        assert_eq!(
+            achievement_stats.rarest.expect("rarest achievement").name,
+            "Rare One"
+        );
+
+        drop(server);
+        restore_xdg_cache_home(previous_cache);
+        let _ = std::fs::remove_dir_all(&cache_root);
     }
 
     #[test]
@@ -1460,18 +1565,10 @@ mod tests {
             use super::super::super::*;
             use crate::cache::AchievementCache;
             use crate::steam::models;
+            use crate::test_support::lock_env;
             use std::env;
             use std::path::Path;
-            use std::sync::Mutex;
             use std::time::{SystemTime, UNIX_EPOCH};
-
-            // XDG_CACHE_HOME is process-global; serialize mutations within this
-            // submodule. Other test files (cache.rs, image_display.rs,
-            // display.rs) hold their own ENV_LOCKs — cross-module races are
-            // possible but the test here only asserts on data that came from
-            // *this* test's pre-populated cache, so a stale read would
-            // surface as an assertion failure rather than silent flakiness.
-            static ENV_LOCK: Mutex<()> = Mutex::new(());
 
             struct EnvScope {
                 prev: Option<String>,
@@ -1539,7 +1636,7 @@ mod tests {
             where
                 F: Fn(&std::path::Path) -> bool,
             {
-                let _guard = ENV_LOCK.lock().unwrap();
+                let _guard = lock_env();
                 for attempt in 0..5 {
                     let root = unique_cache_root(&format!("{}-{}", label, attempt));
                     let scope = EnvScope::set(&root);

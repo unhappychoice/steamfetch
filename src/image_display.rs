@@ -460,6 +460,18 @@ mod tests {
         let _ = query_cell_size_ioctl();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_escape_does_not_panic_without_tty_response() {
+        let _ = query_cell_size_escape();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_uses_default_without_terminal_size() {
+        assert_eq!(query_cell_size(), (10, 20));
+    }
+
     mod print_tests {
         use super::super::*;
         use image::{DynamicImage, ImageBuffer, Rgba};
