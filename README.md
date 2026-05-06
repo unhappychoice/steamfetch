@@ -1,14 +1,19 @@
-# steamfetch
+<p align="center">
+  <img src="docs/screenshot.png" alt="steamfetch" width="820">
+</p>
 
-[![CI](https://github.com/unhappychoice/steamfetch/actions/workflows/ci.yml/badge.svg)](https://github.com/unhappychoice/steamfetch/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/steamfetch.svg)](https://crates.io/crates/steamfetch)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+<p align="center">
+  <a href="https://crates.io/crates/steamfetch"><img src="https://img.shields.io/crates/v/steamfetch.svg?style=flat-square&color=E06B4B" alt="crates.io"></a>
+  <a href="https://github.com/unhappychoice/steamfetch/releases"><img src="https://img.shields.io/github/v/release/unhappychoice/steamfetch?style=flat-square&color=E0C14B&label=release" alt="release"></a>
+  <a href="https://github.com/unhappychoice/steamfetch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/unhappychoice/steamfetch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://codecov.io/gh/unhappychoice/steamfetch"><img src="https://img.shields.io/codecov/c/github/unhappychoice/steamfetch?style=flat-square" alt="codecov"></a>
+  <a href="https://github.com/unhappychoice/steamfetch/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/steamfetch.svg?style=flat-square" alt="license"></a>
+</p>
 
-neofetch for Steam - Display your Steam stats in terminal with style.
-
-## Screenshot
-
-![screenshot](docs/screenshot.png)
+<p align="center">
+  <strong>neofetch for Steam — Display your Steam stats in terminal with style.</strong><br>
+  <sub>Account level, playtime, achievements, top games, and rarest unlocks — all rendered with SteamOS-flavored ASCII art.</sub>
+</p>
 
 ## Installation
 
