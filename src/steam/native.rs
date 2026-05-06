@@ -767,6 +767,7 @@ pub unsafe extern "C" fn CreateInterface(
 
             assert_eq!(client.steam_id(), 0);
             assert_eq!(client.username(), "Unknown");
+            assert!(client.get_owned_appids(&[]).is_empty());
         }
 
         #[test]
