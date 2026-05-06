@@ -625,6 +625,21 @@ struct GameAchievementResult {
 mod tests {
     use super::*;
 
+    fn run_async<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(f)
+    }
+
+    fn unbound_localhost_addr() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local_addr");
+        drop(listener);
+        addr
+    }
+
     #[test]
     fn test_detect_api_error_empty_players() {
         let body = r#"{"response":{"players":[]}}"#;
@@ -813,6 +828,24 @@ mod tests {
     }
 
     #[test]
+    fn test_fetch_stats_propagates_player_fetch_failure() {
+        let client = SteamClient {
+            client: Client::builder()
+                .timeout(Duration::from_secs(1))
+                .resolve("api.steampowered.com", unbound_localhost_addr())
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(1),
+        };
+
+        let err = run_async(client.fetch_stats()).expect_err("player fetch should fail first");
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+    }
+
+    #[test]
     fn test_print_status_does_not_panic() {
         // Writes a CR + clear-line escape + message to stderr; the
         // assertion is simply that it completes without panicking.
@@ -893,22 +926,7 @@ mod tests {
 
     mod fetch_optional_details_tests {
         use super::super::*;
-        use std::net::{SocketAddr, TcpListener};
-
-        fn run_async<F: std::future::Future>(f: F) -> F::Output {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("rt")
-                .block_on(f)
-        }
-
-        fn unbound_localhost_addr() -> SocketAddr {
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-            let addr = listener.local_addr().expect("local_addr");
-            drop(listener);
-            addr
-        }
+        use super::{run_async, unbound_localhost_addr};
 
         #[test]
         fn test_fetch_optional_details_returns_empty_values_when_requests_fail() {
