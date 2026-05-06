@@ -536,6 +536,13 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn test_query_cell_size_escape_returns_none_without_response() {
+        let result = query_cell_size_escape_result_from_response(b"");
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn test_query_cell_size_uses_escape_fallback_when_ioctl_has_no_pixels() {
         let result = query_cell_size_result_from_response(b"\x1b[4;480;800t", true);
         assert_eq!(result, "10,20");
