@@ -640,6 +640,103 @@ mod tests {
         addr
     }
 
+    struct TlsOneShotServer {
+        addr: std::net::SocketAddr,
+        child: std::process::Child,
+        stdin: Option<std::process::ChildStdin>,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for TlsOneShotServer {
+        fn drop(&mut self) {
+            drop(self.stdin.take());
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn spawn_tls_one_shot_server(body: &'static str) -> Option<TlsOneShotServer> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "steamfetch-tls-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&root).ok()?;
+        let cert = root.join("cert.pem");
+        let key = root.join("key.pem");
+
+        let output = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                key.to_str()?,
+                "-out",
+                cert.to_str()?,
+                "-subj",
+                "/CN=api.steampowered.com",
+                "-days",
+                "1",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&root);
+            return None;
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local_addr");
+        drop(listener);
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let mut child = Command::new("openssl")
+            .args([
+                "s_server",
+                "-quiet",
+                "-accept",
+                &addr.port().to_string(),
+                "-cert",
+                cert.to_str()?,
+                "-key",
+                key.to_str()?,
+                "-naccept",
+                "1",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut stdin = child.stdin.take()?;
+        stdin.write_all(response.as_bytes()).ok()?;
+        stdin.flush().ok()?;
+        std::thread::sleep(Duration::from_millis(100));
+
+        Some(TlsOneShotServer {
+            addr,
+            child,
+            stdin: Some(stdin),
+            root,
+        })
+    }
+
     #[test]
     fn test_detect_api_error_empty_players() {
         let body = r#"{"response":{"players":[]}}"#;
@@ -652,6 +749,37 @@ mod tests {
         let body = r#"{"response":{"players":[{"personaname":"test"}]}}"#;
         let result = detect_api_error(body, false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_fetch_player_parses_success_response() {
+        let _guard = crate::test_support::lock_env();
+        let body = r#"{"response":{"players":[{"personaname":"TLS User","timecreated":1234567890,"avatarfull":"https://example.test/avatar.png"}]}}"#;
+        let Some(server) = spawn_tls_one_shot_server(body) else {
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let player = run_async(client.fetch_player()).expect("player response should parse");
+
+        assert_eq!(player.personaname, "TLS User");
+        assert_eq!(player.timecreated, Some(1234567890));
+        assert_eq!(
+            player.avatarfull.as_deref(),
+            Some("https://example.test/avatar.png")
+        );
     }
 
     #[test]
