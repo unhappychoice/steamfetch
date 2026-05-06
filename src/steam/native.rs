@@ -325,6 +325,50 @@ fn parse_games_xml(xml: &str) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    const PROXY_VARS: &[&str] = &[
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ];
+
+    struct EnvScope {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvScope {
+        fn set_unreachable_proxy(url: &str) -> Self {
+            let saved = PROXY_VARS
+                .iter()
+                .map(|&key| {
+                    let prev = std::env::var(key).ok();
+                    std::env::remove_var(key);
+                    (key, prev)
+                })
+                .collect();
+
+            std::env::set_var("HTTPS_PROXY", url);
+            std::env::set_var("https_proxy", url);
+            std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+            std::env::set_var("no_proxy", "127.0.0.1,localhost");
+
+            Self { saved }
+        }
+    }
+
+    impl Drop for EnvScope {
+        fn drop(&mut self) {
+            for (key, value) in &self.saved {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
     fn run_async<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -433,51 +477,6 @@ mod tests {
     #[test]
     fn test_fetch_all_game_appids_propagates_fetch_error() {
         use crate::test_support::lock_env;
-        use std::env;
-
-        const PROXY_VARS: &[&str] = &[
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-            "NO_PROXY",
-            "no_proxy",
-        ];
-
-        struct EnvScope {
-            saved: Vec<(&'static str, Option<String>)>,
-        }
-
-        impl EnvScope {
-            fn set_unreachable_proxy(url: &str) -> Self {
-                let saved = PROXY_VARS
-                    .iter()
-                    .map(|&key| {
-                        let prev = env::var(key).ok();
-                        env::remove_var(key);
-                        (key, prev)
-                    })
-                    .collect();
-
-                env::set_var("HTTPS_PROXY", url);
-                env::set_var("https_proxy", url);
-                env::set_var("NO_PROXY", "127.0.0.1,localhost");
-                env::set_var("no_proxy", "127.0.0.1,localhost");
-
-                Self { saved }
-            }
-        }
-
-        impl Drop for EnvScope {
-            fn drop(&mut self) {
-                for (key, value) in &self.saved {
-                    match value {
-                        Some(v) => env::set_var(key, v),
-                        None => env::remove_var(key),
-                    }
-                }
-            }
-        }
 
         let _guard = lock_env();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -492,6 +491,36 @@ mod tests {
             msg.contains("Failed to fetch games.xml"),
             "expected fetch context, got: {msg}",
         );
+    }
+
+    #[test]
+    fn test_fetch_all_game_appids_proxy_scope_restores_previous_values() {
+        use crate::test_support::lock_env;
+        use std::env;
+
+        let _guard = lock_env();
+        let original: Vec<(&'static str, Option<String>)> = PROXY_VARS
+            .iter()
+            .map(|&key| (key, env::var(key).ok()))
+            .collect();
+        env::set_var("HTTPS_PROXY", "http://proxy-sentinel.invalid:9");
+
+        {
+            let _scope = EnvScope::set_unreachable_proxy("http://127.0.0.1:9");
+            assert_eq!(env::var("HTTPS_PROXY").unwrap(), "http://127.0.0.1:9");
+        }
+
+        assert_eq!(
+            env::var("HTTPS_PROXY").unwrap(),
+            "http://proxy-sentinel.invalid:9"
+        );
+
+        for (key, value) in original {
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]
