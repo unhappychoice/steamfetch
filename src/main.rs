@@ -226,6 +226,19 @@ mod tests {
     }
 
     #[test]
+    fn test_demo_stats_profile_details_are_present() {
+        let stats = demo_stats();
+        let achievements = stats.achievement_stats.as_ref().expect("demo achievements");
+        let rarest = achievements.rarest.as_ref().expect("demo rarest");
+
+        assert_eq!(stats.account_created, Some(1234567890));
+        assert_eq!(stats.steam_level, Some(42));
+        assert_eq!(rarest.name, "Impossible Task");
+        assert_eq!(rarest.game, "Dark Souls III");
+        assert_eq!(stats.recently_played[0].playtime_minutes, 1200);
+    }
+
+    #[test]
     fn test_cli_parses_minimum_args() {
         let cli = Cli::try_parse_from(["steamfetch"]).expect("default args should parse");
         assert!(!cli.demo);
