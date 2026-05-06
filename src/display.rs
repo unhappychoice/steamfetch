@@ -1263,6 +1263,25 @@ mod tests {
         }
 
         #[test]
+        fn test_render_with_image_falls_back_when_avatar_download_fails() {
+            let _guard = lock_env();
+            let root = unique_cache_root("download-fail");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "downloadfail".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/missing.png".to_string());
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
         fn test_envscope_drop_restores_previous_xdg_cache_home() {
             // Sibling tests in this submodule run with XDG_CACHE_HOME unset,
             // so EnvScope::Drop's `None => env::remove_var(...)` arm dominates
