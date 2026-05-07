@@ -325,6 +325,58 @@ fn parse_games_xml(xml: &str) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    const PROXY_VARS: &[&str] = &[
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ];
+
+    struct EnvScope {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvScope {
+        fn set_unreachable_proxy(url: &str) -> Self {
+            let saved = PROXY_VARS
+                .iter()
+                .map(|&key| {
+                    let prev = std::env::var(key).ok();
+                    std::env::remove_var(key);
+                    (key, prev)
+                })
+                .collect();
+
+            std::env::set_var("HTTPS_PROXY", url);
+            std::env::set_var("https_proxy", url);
+            std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+            std::env::set_var("no_proxy", "127.0.0.1,localhost");
+
+            Self { saved }
+        }
+    }
+
+    impl Drop for EnvScope {
+        fn drop(&mut self) {
+            for (key, value) in &self.saved {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn run_async<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(f)
+    }
+
     #[test]
     fn test_parse_games_xml() {
         let xml = r#"<?xml version="1.0"?><games><game>220</game><game>240</game><game type="junk">480</game></games>"#;
@@ -385,6 +437,29 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_games_xml_recovers_after_malformed_game_tag() {
+        let xml = "<games><game>broken<game>480</game><game>730</game></games>";
+        assert_eq!(parse_games_xml(xml), vec![730]);
+    }
+
+    #[test]
+    fn test_parse_games_xml_preserves_ordered_edge_cases() {
+        [
+            (
+                "<games><game>10</game><game>20</game><game>10</game></games>",
+                vec![10, 20, 10],
+            ),
+            (
+                r#"<games><game data-id="x">30</game><games><game>40</game></games>"#,
+                vec![30, 40],
+            ),
+            ("noise <game>50</game> tail <game>60</game>", vec![50, 60]),
+        ]
+        .into_iter()
+        .for_each(|(xml, expected)| assert_eq!(parse_games_xml(xml), expected));
+    }
+
+    #[test]
     fn test_parse_games_xml_multiple_games_wrappers_handled() {
         // Two `<games>` wrappers in sequence should both be skipped
         // without producing spurious entries.
@@ -399,6 +474,55 @@ mod tests {
         assert_eq!(parse_games_xml(xml), vec![20]);
     }
 
+    #[test]
+    fn test_fetch_all_game_appids_propagates_fetch_error() {
+        use crate::test_support::lock_env;
+
+        let _guard = lock_env();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+
+        let err = run_async(fetch_all_game_appids())
+            .expect_err("unreachable HTTPS proxy should make games.xml fetch fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Failed to fetch games.xml"),
+            "expected fetch context, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_fetch_all_game_appids_proxy_scope_restores_previous_values() {
+        use crate::test_support::lock_env;
+        use std::env;
+
+        let _guard = lock_env();
+        let original: Vec<(&'static str, Option<String>)> = PROXY_VARS
+            .iter()
+            .map(|&key| (key, env::var(key).ok()))
+            .collect();
+        env::set_var("HTTPS_PROXY", "http://proxy-sentinel.invalid:9");
+
+        {
+            let _scope = EnvScope::set_unreachable_proxy("http://127.0.0.1:9");
+            assert_eq!(env::var("HTTPS_PROXY").unwrap(), "http://127.0.0.1:9");
+        }
+
+        assert_eq!(
+            env::var("HTTPS_PROXY").unwrap(),
+            "http://proxy-sentinel.invalid:9"
+        );
+
+        for (key, value) in original {
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+        }
+    }
+
     #[cfg(target_os = "linux")]
     mod steam_client_path_tests {
         use super::super::*;
@@ -406,6 +530,7 @@ mod tests {
         use std::env;
         use std::fs;
         use std::path::{Path, PathBuf};
+        use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         struct HomeScope {
@@ -598,6 +723,38 @@ mod tests {
                 .find(|p| p.exists())
         }
 
+        fn write_null_create_interface_lib(target: &Path) {
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let source = target.with_extension("rs");
+            fs::write(
+                &source,
+                r#"
+#[no_mangle]
+pub unsafe extern "C" fn CreateInterface(
+    _: *const std::os::raw::c_char,
+    _: *mut i32,
+) -> *mut std::os::raw::c_void {
+    std::ptr::null_mut()
+}
+"#,
+            )
+            .unwrap();
+
+            let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+            let output = Command::new(rustc)
+                .arg("--crate-type=cdylib")
+                .arg(&source)
+                .arg("-o")
+                .arg(target)
+                .output()
+                .expect("rustc should run");
+            assert!(
+                output.status.success(),
+                "rustc failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
         #[test]
         fn test_try_new_returns_none_when_create_interface_symbol_missing() {
             // `Library::new` succeeds (we symlink to a real, loadable system
@@ -626,6 +783,43 @@ mod tests {
             assert!(NativeSteamClient::try_new(false).is_none());
 
             let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_try_new_returns_none_when_create_interface_returns_null() {
+            // A tiny fake steamclient.so exports CreateInterface but returns a
+            // null pointer. That reaches the null-client branch after dlopen and
+            // symbol lookup both succeed, without calling any Steamworks APIs.
+            let _guard = lock_env();
+            let root = unique_root("create-iface-null");
+            let _scope = HomeScope::set(&root);
+            let target = root.join(".steam/sdk64/steamclient.so");
+            write_null_create_interface_lib(&target);
+
+            assert!(NativeSteamClient::try_new(true).is_none());
+
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_null_native_handles_return_fallback_values() {
+            let Some(real_lib) = find_loadable_system_lib() else {
+                return;
+            };
+            let lib = unsafe { Library::new(real_lib).expect("system library should load") };
+            let client = std::mem::ManuallyDrop::new(NativeSteamClient {
+                _lib: lib,
+                client: std::ptr::null_mut(),
+                pipe: 0,
+                user: 0,
+                apps: std::ptr::null_mut(),
+                friends: std::ptr::null_mut(),
+                steam_user: std::ptr::null_mut(),
+            });
+
+            assert_eq!(client.steam_id(), 0);
+            assert_eq!(client.username(), "Unknown");
+            assert!(client.get_owned_appids(&[]).is_empty());
         }
 
         #[test]

@@ -460,6 +460,250 @@ mod tests {
         let _ = query_cell_size_ioctl();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_ioctl_uses_stdout_pixel_dimensions() {
+        struct StdoutGuard {
+            saved_stdout: i32,
+            master: i32,
+            slave: i32,
+        }
+
+        impl Drop for StdoutGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::dup2(self.saved_stdout, libc::STDOUT_FILENO);
+                    libc::close(self.saved_stdout);
+                    libc::close(self.slave);
+                    libc::close(self.master);
+                }
+            }
+        }
+
+        let mut master = -1;
+        let mut slave = -1;
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 800,
+            ws_ypixel: 384,
+        };
+
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &size,
+            )
+        };
+        assert_eq!(opened, 0, "openpty should create a pseudo terminal");
+
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved_stdout >= 0, "stdout should be duplicated");
+        let _guard = StdoutGuard {
+            saved_stdout,
+            master,
+            slave,
+        };
+
+        unsafe {
+            libc::dup2(slave, libc::STDOUT_FILENO);
+        }
+        assert_eq!(query_cell_size(), (10, 16));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_escape_does_not_panic_without_tty_response() {
+        let _ = query_cell_size_escape();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_parses_terminal_response() {
+        let result = query_cell_size_escape_result_from_response(b"\x1b[4;480;800t");
+        assert_eq!(result, "10,20");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_returns_none_for_zero_pixel_response() {
+        let result = query_cell_size_escape_result_from_response(b"\x1b[4;0;800t");
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_returns_none_without_response() {
+        let result = query_cell_size_escape_result_from_response(b"");
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_escape_returns_none_when_tty_size_has_no_rows() {
+        let size = libc::winsize {
+            ws_row: 0,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let result = query_cell_size_result_from_response_with_size(b"", false, size, false);
+        assert_eq!(result, "none");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_query_cell_size_uses_escape_fallback_when_ioctl_has_no_pixels() {
+        let result = query_cell_size_result_from_response(b"\x1b[4;480;800t", true);
+        assert_eq!(result, "10,20");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_escape_result_from_response(response: &[u8]) -> String {
+        query_cell_size_result_from_response(response, false)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_result_from_response(response: &[u8], use_query_cell_size: bool) -> String {
+        let size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        query_cell_size_result_from_response_with_size(response, use_query_cell_size, size, true)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn query_cell_size_result_from_response_with_size(
+        response: &[u8],
+        use_query_cell_size: bool,
+        size: libc::winsize,
+        expect_query: bool,
+    ) -> String {
+        use std::io::Read;
+        use std::os::fd::FromRawFd;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut master = -1;
+        let mut slave = -1;
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &size,
+            )
+        };
+        assert_eq!(opened, 0, "openpty should create a pseudo terminal");
+
+        let mut pipe_fds = [-1, -1];
+        assert_eq!(
+            unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+            0,
+            "pipe should be created"
+        );
+
+        let mut child = unsafe {
+            let mut command = Command::new(std::env::current_exe().expect("current test binary"));
+            command
+                .arg("--exact")
+                .arg("image_display::tests::query_cell_size_escape_child_process")
+                .arg("--nocapture")
+                .env(
+                    "STEAMFETCH_QUERY_CELL_SIZE_RESULT_FD",
+                    pipe_fds[1].to_string(),
+                )
+                .env(
+                    "STEAMFETCH_QUERY_CELL_SIZE_USE_WRAPPER",
+                    if use_query_cell_size { "1" } else { "0" },
+                )
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .pre_exec(move || {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::ioctl(slave, libc::TIOCSCTTY, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            command.spawn().expect("child test process should spawn")
+        };
+
+        unsafe {
+            libc::close(slave);
+            libc::close(pipe_fds[1]);
+        }
+
+        if expect_query {
+            let mut query = [0u8; 16];
+            let n = unsafe { libc::read(master, query.as_mut_ptr() as *mut _, query.len()) };
+            assert!(n > 0, "child should write the terminal query");
+            assert!(std::str::from_utf8(&query[..n as usize])
+                .expect("query should be utf8")
+                .contains("\x1b[14t"));
+
+            assert_eq!(
+                unsafe { libc::write(master, response.as_ptr() as *const _, response.len()) },
+                response.len() as isize,
+                "terminal response should be written"
+            );
+        }
+
+        let mut result = String::new();
+        let mut pipe = unsafe { std::fs::File::from_raw_fd(pipe_fds[0]) };
+        pipe.read_to_string(&mut result)
+            .expect("child result should be readable");
+
+        unsafe {
+            libc::close(master);
+        }
+        let status = child.wait().expect("child test process should exit");
+
+        assert!(status.success(), "child should exit normally");
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn query_cell_size_escape_child_process() {
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+
+        let Ok(fd) = std::env::var("STEAMFETCH_QUERY_CELL_SIZE_RESULT_FD") else {
+            return;
+        };
+        let fd: i32 = fd.parse().expect("result fd should be an integer");
+        let result = if std::env::var("STEAMFETCH_QUERY_CELL_SIZE_USE_WRAPPER")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            Some(query_cell_size())
+        } else {
+            query_cell_size_escape()
+        }
+        .map(|(w, h)| format!("{},{}", w, h))
+        .unwrap_or_else(|| "none".to_string());
+        let mut pipe = unsafe { std::fs::File::from_raw_fd(fd) };
+        pipe.write_all(result.as_bytes())
+            .expect("result should be written");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_cell_size_uses_default_without_terminal_size() {
+        assert_eq!(query_cell_size(), (10, 20));
+    }
+
     mod print_tests {
         use super::super::*;
         use image::{DynamicImage, ImageBuffer, Rgba};
@@ -524,6 +768,17 @@ mod tests {
         }
 
         #[test]
+        fn test_print_sixel_errors_when_rgba_buffer_is_too_short() {
+            let err = print_sixel(&[], 1, 1).expect_err("empty RGBA buffer should fail");
+            assert_eq!(err.kind(), io::ErrorKind::Other);
+
+            let err = print_sixel(&[255, 0, 0], 1, 1)
+                .expect_err("RGB-only buffer should fail without alpha");
+            assert_eq!(err.kind(), io::ErrorKind::Other);
+            assert!(!err.to_string().is_empty());
+        }
+
+        #[test]
         fn test_print_image_and_rewind_kitty_returns_input_rows() {
             let img = make_test_image(8, 8);
             let rows = print_image_and_rewind(&img, &ImageProtocol::Kitty, 4, 3);
@@ -542,6 +797,13 @@ mod tests {
             let img = make_test_image(8, 8);
             let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 4, 3);
             assert_eq!(rows, Some(3));
+        }
+
+        #[test]
+        fn test_print_image_and_rewind_returns_none_when_output_fails() {
+            let img = make_test_image(8, 8);
+            let rows = print_image_and_rewind(&img, &ImageProtocol::Sixel, 0, 3);
+            assert_eq!(rows, None);
         }
     }
 
@@ -1111,6 +1373,8 @@ mod tests {
             // so prev = None, then verify Drop removes the value we set during
             // the scope.
             let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-none-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
             env::remove_var("XDG_CACHE_HOME");
 
@@ -1130,6 +1394,35 @@ mod tests {
             }
 
             let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn test_envscope_drop_restores_previous_xdg_cache_home() {
+            let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-restore-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
+            let outer_prev = env::var("XDG_CACHE_HOME").ok();
+            let sentinel_root = unique_cache_root("envscope-restore-sentinel");
+            env::set_var("XDG_CACHE_HOME", &sentinel_root);
+
+            let scoped_root = unique_cache_root("envscope-restore-scoped");
+            {
+                let _scope = EnvScope::set(&scoped_root);
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    scoped_root.to_string_lossy(),
+                );
+            }
+
+            assert_eq!(
+                env::var("XDG_CACHE_HOME").unwrap(),
+                sentinel_root.to_string_lossy(),
+            );
+
+            match outer_prev {
+                Some(v) => env::set_var("XDG_CACHE_HOME", v),
+                None => env::remove_var("XDG_CACHE_HOME"),
+            }
         }
 
         #[test]

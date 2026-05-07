@@ -1062,6 +1062,32 @@ mod tests {
     }
 
     #[test]
+    fn test_build_info_lines_truncates_rarest_section_for_narrow_width() {
+        let mut stats = make_minimal_stats();
+        stats.achievement_stats = Some(AchievementStats {
+            total_achieved: 8,
+            total_possible: 10,
+            perfect_games: 1,
+            rarest: Some(RarestAchievement {
+                name: "A Very Long Achievement Name".to_string(),
+                game: "A Very Long Game Title".to_string(),
+                percent: 12.3,
+            }),
+        });
+
+        let lines = build_info_lines(&stats, 20);
+        let text = lines_text(&lines);
+        let rarest_line = text.lines().find(|line| line.contains("Rarest")).unwrap();
+        let game_line = text.lines().find(|line| line.contains("in ")).unwrap();
+
+        assert!(rarest_line.contains("..."));
+        assert!(rarest_line.contains("12.3%"));
+        assert!(game_line.contains("..."));
+        assert!(!rarest_line.contains("Achievement Name"));
+        assert!(!game_line.contains("Game Title"));
+    }
+
+    #[test]
     fn test_build_info_lines_with_recently_played_adds_section() {
         let mut stats = make_minimal_stats();
         stats.recently_played = vec![GameStat {
@@ -1263,6 +1289,25 @@ mod tests {
         }
 
         #[test]
+        fn test_render_with_image_falls_back_when_avatar_download_fails() {
+            let _guard = lock_env();
+            let root = unique_cache_root("download-fail");
+            let _scope = EnvScope::set(&root);
+
+            let mut stats = make_minimal_stats();
+            stats.username = "downloadfail".to_string();
+            stats.avatar_url = Some("http://127.0.0.1:1/missing.png".to_string());
+
+            let config = ImageConfig {
+                enabled: true,
+                protocol: ImageProtocol::Sixel,
+            };
+            run_async(render(&stats, &config));
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
         fn test_envscope_drop_restores_previous_xdg_cache_home() {
             // Sibling tests in this submodule run with XDG_CACHE_HOME unset,
             // so EnvScope::Drop's `None => env::remove_var(...)` arm dominates
@@ -1270,6 +1315,8 @@ mod tests {
             // uncovered. Pre-set the variable before constructing an EnvScope
             // so prev = Some(v), forcing Drop to take the restore branch.
             let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-restore-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
 
             let sentinel_root = unique_cache_root("envscope-restore-sentinel");

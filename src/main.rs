@@ -226,6 +226,50 @@ mod tests {
     }
 
     #[test]
+    fn test_demo_stats_profile_details_are_present() {
+        let stats = demo_stats();
+        let achievements = stats.achievement_stats.as_ref().expect("demo achievements");
+        let rarest = achievements.rarest.as_ref().expect("demo rarest");
+
+        assert_eq!(stats.account_created, Some(1234567890));
+        assert_eq!(stats.steam_level, Some(42));
+        assert_eq!(rarest.name, "Impossible Task");
+        assert_eq!(rarest.game, "Dark Souls III");
+        assert_eq!(stats.recently_played[0].playtime_minutes, 1200);
+    }
+
+    #[test]
+    fn test_demo_stats_fixture_values_are_stable() {
+        let stats = demo_stats();
+        let top_games = stats
+            .top_games
+            .iter()
+            .map(|game| (game.name.as_str(), game.playtime_minutes))
+            .collect::<Vec<_>>();
+        let recently_played = stats
+            .recently_played
+            .iter()
+            .map(|game| (game.name.as_str(), game.playtime_minutes))
+            .collect::<Vec<_>>();
+
+        assert_eq!(stats.game_count, 486);
+        assert_eq!(stats.unplayed_count, 123);
+        assert_eq!(stats.total_playtime_minutes, 170820);
+        assert_eq!(
+            top_games,
+            vec![
+                ("Borderlands 3", 28680),
+                ("Coin Push RPG", 22620),
+                ("DRG Survivor", 15120),
+            ],
+        );
+        assert_eq!(
+            recently_played,
+            vec![("Elden Ring", 1200), ("Hades II", 480)]
+        );
+    }
+
+    #[test]
     fn test_cli_parses_minimum_args() {
         let cli = Cli::try_parse_from(["steamfetch"]).expect("default args should parse");
         assert!(!cli.demo);
@@ -250,6 +294,56 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parses_verbose_long_flag_with_other_options() {
+        let cli = Cli::try_parse_from([
+            "steamfetch",
+            "--verbose",
+            "--timeout",
+            "5",
+            "--image",
+            "--image-protocol",
+            "sixel",
+            "--config",
+            "/tmp/steamfetch.toml",
+        ])
+        .expect("long verbose and related options should parse");
+
+        assert!(cli.verbose);
+        assert_eq!(cli.timeout, 5);
+        assert!(cli.image);
+        assert!(matches!(cli.image_protocol, ImageProtocol::Sixel));
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/tmp/steamfetch.toml"))
+        );
+    }
+
+    #[test]
+    fn test_cli_parses_demo_with_image_options() {
+        let cli = Cli::try_parse_from([
+            "steamfetch",
+            "--demo",
+            "--image",
+            "--image-protocol",
+            "iterm",
+            "--timeout",
+            "9",
+            "--config",
+            "/tmp/demo.toml",
+        ])
+        .expect("demo with image options should parse");
+
+        assert!(cli.demo);
+        assert!(cli.image);
+        assert!(matches!(cli.image_protocol, ImageProtocol::Iterm));
+        assert_eq!(cli.timeout, 9);
+        assert_eq!(
+            cli.config.as_deref(),
+            Some(std::path::Path::new("/tmp/demo.toml"))
+        );
+    }
+
+    #[test]
     fn test_cli_parses_config_path_flag() {
         let cli = Cli::try_parse_from(["steamfetch", "--config-path"])
             .expect("--config-path should parse");
@@ -267,6 +361,16 @@ mod tests {
     fn test_cli_rejects_zero_timeout() {
         // Range is 1.. — zero must be rejected by clap's value_parser.
         assert!(Cli::try_parse_from(["steamfetch", "--timeout", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_rejects_invalid_timeout_values() {
+        [
+            ["steamfetch", "--timeout", "not-a-number"],
+            ["steamfetch", "--timeout", "-1"],
+        ]
+        .into_iter()
+        .for_each(|args| assert!(Cli::try_parse_from(args).is_err()));
     }
 
     #[test]
@@ -298,6 +402,17 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_rejects_missing_option_values() {
+        for args in [
+            ["steamfetch", "--timeout"],
+            ["steamfetch", "--config"],
+            ["steamfetch", "--image-protocol"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
     fn test_cli_parses_config_path_value() {
         let cli = Cli::try_parse_from(["steamfetch", "--config", "/tmp/cfg.toml"])
             .expect("--config should parse");
@@ -321,17 +436,9 @@ mod tests {
         // hit the web-stats path.
         use std::env;
         use std::path::PathBuf;
-        use std::sync::Mutex;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        // $HOME mutation is process-global; serialize within this test
-        // module. Cross-module races with src/steam/native.rs's HOME
-        // manipulation are still possible, but every alternative HOME those
-        // tests install either has no steamclient files or only "stub" bytes
-        // that `Library::new` cannot dlopen, so the `None` arm of
-        // `fetch_stats` is reached either way.
-        static HOME_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_support::lock_env();
 
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -422,5 +529,223 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_fetch_web_stats_propagates_client_fetch_error_after_valid_config() {
+        use std::env;
+
+        const PROXY_VARS: &[&str] = &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        struct EnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl EnvScope {
+            fn set_unreachable_proxy(url: &str) -> Self {
+                let saved = PROXY_VARS
+                    .iter()
+                    .map(|&key| {
+                        let prev = env::var(key).ok();
+                        env::remove_var(key);
+                        (key, prev)
+                    })
+                    .collect();
+
+                env::set_var("HTTPS_PROXY", url);
+                env::set_var("https_proxy", url);
+                env::set_var("ALL_PROXY", url);
+                env::set_var("all_proxy", url);
+                env::set_var("NO_PROXY", "127.0.0.1,localhost");
+                env::set_var("no_proxy", "127.0.0.1,localhost");
+
+                Self { saved }
+            }
+        }
+
+        impl Drop for EnvScope {
+            fn drop(&mut self) {
+                for (key, value) in &self.saved {
+                    match value {
+                        Some(v) => env::set_var(key, v),
+                        None => env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        let _guard = crate::test_support::lock_env();
+        let outer_all_proxy = env::var("ALL_PROXY").ok();
+        env::set_var("ALL_PROXY", "http://proxy-sentinel.invalid:9");
+
+        let err = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let addr = listener.local_addr().expect("local addr");
+            drop(listener);
+            let _scope = EnvScope::set_unreachable_proxy(&format!("http://{}", addr));
+
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = env::temp_dir().join(format!(
+                "steamfetch-fetch-web-stats-valid-{}-{}.toml",
+                std::process::id(),
+                nanos
+            ));
+            std::fs::write(
+                &path,
+                r#"
+[api]
+steam_api_key = "test-key"
+steam_id = "76561197960265728"
+"#,
+            )
+            .unwrap();
+
+            let cli = Cli {
+                demo: false,
+                verbose: false,
+                config: Some(path.clone()),
+                config_path: false,
+                timeout: 1,
+                image: false,
+                image_protocol: ImageProtocol::Auto,
+            };
+
+            let err = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt")
+                .block_on(fetch_web_stats(&cli))
+                .expect_err("unreachable proxy should make fetch_stats fail");
+
+            let _ = std::fs::remove_file(&path);
+            err
+        };
+
+        assert_eq!(
+            env::var("ALL_PROXY").unwrap(),
+            "http://proxy-sentinel.invalid:9"
+        );
+        match outer_all_proxy {
+            Some(v) => env::set_var("ALL_PROXY", v),
+            None => env::remove_var("ALL_PROXY"),
+        }
+
+        assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
+    }
+
+    #[test]
+    fn test_fetch_web_stats_uses_env_credentials_before_client_error() {
+        use std::env;
+
+        const PROXY_VARS: &[&str] = &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        struct ProxyEnvScope {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+
+        impl ProxyEnvScope {
+            fn set_unreachable_proxy(url: &str) -> Self {
+                let saved = PROXY_VARS
+                    .iter()
+                    .map(|&key| {
+                        let prev = env::var(key).ok();
+                        env::remove_var(key);
+                        (key, prev)
+                    })
+                    .collect();
+
+                env::set_var("HTTPS_PROXY", url);
+                env::set_var("https_proxy", url);
+                env::set_var("ALL_PROXY", url);
+                env::set_var("all_proxy", url);
+                env::set_var("NO_PROXY", "127.0.0.1,localhost");
+                env::set_var("no_proxy", "127.0.0.1,localhost");
+
+                Self { saved }
+            }
+        }
+
+        impl Drop for ProxyEnvScope {
+            fn drop(&mut self) {
+                for (key, value) in &self.saved {
+                    match value {
+                        Some(v) => env::set_var(key, v),
+                        None => env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        fn restore_env(key: &str, value: Option<String>) {
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+        }
+
+        let _guard = crate::test_support::lock_env();
+        let outer_api_key = env::var("STEAM_API_KEY").ok();
+        let original_steam_id = env::var("STEAM_ID").ok();
+        env::set_var("STEAM_API_KEY", "outer-env-key");
+        let original_api_key = env::var("STEAM_API_KEY").ok();
+        env::set_var("STEAM_API_KEY", "env-test-key");
+        env::set_var("STEAM_ID", "76561197960265728");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let proxy_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        drop(listener);
+        let _proxy = ProxyEnvScope::set_unreachable_proxy(&proxy_url);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = env::temp_dir().join(format!(
+            "steamfetch-fetch-web-stats-env-{}-{}.toml",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, "").unwrap();
+
+        let cli = Cli {
+            demo: false,
+            verbose: true,
+            config: Some(path.clone()),
+            config_path: false,
+            timeout: 1,
+            image: false,
+            image_protocol: ImageProtocol::Auto,
+        };
+
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(fetch_web_stats(&cli))
+            .expect_err("unreachable proxy should make env-backed fetch fail");
+
+        let _ = std::fs::remove_file(&path);
+        restore_env("STEAM_API_KEY", original_api_key);
+        restore_env("STEAM_ID", original_steam_id);
+        restore_env("STEAM_API_KEY", outer_api_key);
+
+        assert!(err.downcast_ref::<steam::error::SteamApiError>().is_some());
     }
 }

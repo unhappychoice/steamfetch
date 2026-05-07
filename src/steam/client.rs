@@ -625,6 +625,181 @@ struct GameAchievementResult {
 mod tests {
     use super::*;
 
+    fn run_async<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(f)
+    }
+
+    fn unbound_localhost_addr() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local_addr");
+        drop(listener);
+        addr
+    }
+
+    struct TlsOneShotServer {
+        addr: std::net::SocketAddr,
+        child: std::process::Child,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for TlsOneShotServer {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn spawn_tls_server(
+        files: &[(&'static str, &'static str)],
+        accepted_connections: usize,
+    ) -> Option<TlsOneShotServer> {
+        use std::process::{Command, Stdio};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "steamfetch-tls-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&root).ok()?;
+        let cert = root.join("cert.pem");
+        let key = root.join("key.pem");
+
+        let output = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                key.to_str()?,
+                "-out",
+                cert.to_str()?,
+                "-subj",
+                "/CN=api.steampowered.com",
+                "-days",
+                "1",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&root);
+            return None;
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local_addr");
+        drop(listener);
+
+        for (request_path, body) in files {
+            let response_path = root.join(request_path);
+            std::fs::create_dir_all(response_path.parent()?).ok()?;
+            std::fs::write(
+                &response_path,
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
+                    body
+                ),
+            )
+            .ok()?;
+        }
+
+        let accepted_connections = accepted_connections.to_string();
+        let child = Command::new("openssl")
+            .args([
+                "s_server",
+                "-quiet",
+                "-HTTP",
+                "-accept",
+                &addr.port().to_string(),
+                "-cert",
+                cert.to_str()?,
+                "-key",
+                key.to_str()?,
+                "-naccept",
+                &accepted_connections,
+            ])
+            .current_dir(&root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        std::thread::sleep(Duration::from_secs(1));
+
+        Some(TlsOneShotServer { addr, child, root })
+    }
+
+    fn spawn_tls_one_shot_server(
+        request_path: &'static str,
+        body: &'static str,
+    ) -> Option<TlsOneShotServer> {
+        spawn_tls_server(&[(request_path, body)], 1)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_spawn_tls_server_returns_none_when_openssl_fails() {
+        use std::env;
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = crate::test_support::lock_env();
+        let root = unique_temp_root("fake-openssl");
+        std::fs::create_dir_all(&root).expect("fake openssl dir should be created");
+        let openssl = root.join("openssl");
+        std::fs::write(&openssl, "#!/bin/sh\nexit 1\n").expect("fake openssl should be written");
+        let mut perms = std::fs::metadata(&openssl)
+            .expect("fake openssl metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&openssl, perms).expect("fake openssl should be executable");
+
+        let previous_path = env::var("PATH").ok();
+        env::set_var("PATH", &root);
+
+        let server = spawn_tls_server(&[], 1);
+
+        match previous_path {
+            Some(path) => env::set_var("PATH", path),
+            None => env::remove_var("PATH"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(server.is_none());
+    }
+
+    fn unique_temp_root(label: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "steamfetch-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn restore_xdg_cache_home(previous: Option<String>) {
+        match previous {
+            Some(value) => std::env::set_var("XDG_CACHE_HOME", value),
+            None => std::env::remove_var("XDG_CACHE_HOME"),
+        }
+    }
+
     #[test]
     fn test_detect_api_error_empty_players() {
         let body = r#"{"response":{"players":[]}}"#;
@@ -637,6 +812,244 @@ mod tests {
         let body = r#"{"response":{"players":[{"personaname":"test"}]}}"#;
         let result = detect_api_error(body, false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_fetch_player_parses_success_response() {
+        let _guard = crate::test_support::lock_env();
+        let body = r#"{"response":{"players":[{"personaname":"TLS User","timecreated":1234567890,"avatarfull":"https://example.test/avatar.png"}]}}"#;
+        let Some(server) =
+            spawn_tls_one_shot_server("ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id", body)
+        else {
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let player = run_async(client.fetch_player()).expect("player response should parse");
+
+        assert_eq!(player.personaname, "TLS User");
+        assert_eq!(player.timecreated, Some(1234567890));
+        assert_eq!(
+            player.avatarfull.as_deref(),
+            Some("https://example.test/avatar.png")
+        );
+    }
+
+    #[test]
+    fn test_fetch_recently_played_parse_error_has_context() {
+        let _guard = crate::test_support::lock_env();
+        let server = spawn_tls_one_shot_server(
+            "IPlayerService/GetRecentlyPlayedGames/v1/?key=k&steamid=id&count=5",
+            "{not-json",
+        )
+        .expect("TLS test server should start");
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let err = run_async(client.fetch_recently_played())
+            .expect_err("invalid recently played JSON should fail to parse");
+
+        assert!(format!("{:#}", err).contains("Failed to parse recently played"));
+    }
+
+    #[test]
+    fn test_fetch_steam_level_returns_none_for_null_level() {
+        let _guard = crate::test_support::lock_env();
+        let server = spawn_tls_one_shot_server(
+            "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+            r#"{"response":{"player_level":null}}"#,
+        )
+        .expect("TLS test server should start");
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(3),
+        };
+
+        let level = run_async(client.fetch_steam_level()).expect("steam level should parse");
+
+        assert_eq!(level, None);
+    }
+
+    #[test]
+    fn test_fetch_stats_builds_success_response_from_api_data() {
+        let _guard = crate::test_support::lock_env();
+        let cache_root = unique_temp_root("fetch-stats-success-cache");
+        let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+        std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+        let mut cache = crate::cache::AchievementCache::default();
+        cache.set(100, 1000, 1, 2, Some(("Rare One", 3.5)));
+        cache.set(200, 2000, 0, 2, None);
+        cache.save();
+
+        let files = [
+            (
+                "ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id",
+                r#"{"response":{"players":[{"personaname":"TLS User","timecreated":1234567890,"avatarfull":"https://example.test/avatar.png"}]}}"#,
+            ),
+            (
+                "IPlayerService/GetOwnedGames/v1/?key=k&steamid=id&include_appinfo=1&include_played_free_games=1",
+                r#"{"response":{"game_count":2,"games":[{"appid":100,"name":"Game One","playtime_forever":120,"rtime_last_played":1000},{"appid":200,"name":"Game Two","playtime_forever":0,"rtime_last_played":2000}]}}"#,
+            ),
+            (
+                "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+                r#"{"response":{"player_level":42}}"#,
+            ),
+            (
+                "IPlayerService/GetRecentlyPlayedGames/v1/?key=k&steamid=id&count=5",
+                r#"{"response":{"games":[{"appid":100,"name":"Game One","playtime_forever":120,"playtime_2weeks":30}]}}"#,
+            ),
+        ];
+        let Some(server) = spawn_tls_server(&files, files.len()) else {
+            restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let stats = run_async(client.fetch_stats()).expect("stats response should parse");
+
+        assert_eq!(stats.username, "TLS User");
+        assert_eq!(stats.game_count, 2);
+        assert_eq!(stats.unplayed_count, 1);
+        assert_eq!(stats.total_playtime_minutes, 120);
+        assert_eq!(stats.steam_level, Some(42));
+        assert_eq!(stats.recently_played[0].name, "Game One");
+        assert_eq!(stats.top_games[0].name, "Game One");
+        let achievement_stats = stats.achievement_stats.expect("cached achievements");
+        assert_eq!(achievement_stats.total_achieved, 1);
+        assert_eq!(achievement_stats.total_possible, 4);
+        assert_eq!(
+            achievement_stats.rarest.expect("rarest achievement").name,
+            "Rare One"
+        );
+
+        drop(server);
+        restore_xdg_cache_home(previous_cache);
+        let _ = std::fs::remove_dir_all(&cache_root);
+    }
+
+    #[test]
+    fn test_fetch_stats_for_appids_builds_success_response_from_filtered_api_data() {
+        let _guard = crate::test_support::lock_env();
+        let cache_root = unique_temp_root("fetch-stats-for-appids-success-cache");
+        let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+        std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+        let mut cache = crate::cache::AchievementCache::default();
+        cache.set(100, 1000, 2, 2, Some(("Native Rare", 4.0)));
+        cache.set(200, 2000, 1, 3, None);
+        cache.set(300, 0, 0, 1, Some(("Missing Game Rare", 2.0)));
+        cache.save();
+
+        let files = [
+            (
+                "ISteamUser/GetPlayerSummaries/v2/?key=k&steamids=id",
+                r#"{"response":{"players":[{"personaname":"Web User","timecreated":2222,"avatarfull":"https://example.test/native.png"}]}}"#,
+            ),
+            (
+                "IPlayerService/GetOwnedGames/v1/?key=k&steamid=id&include_appinfo=1&include_played_free_games=1&appids_filter%5B0%5D=100&appids_filter%5B1%5D=200&appids_filter%5B2%5D=300",
+                r#"{"response":{"game_count":2,"games":[{"appid":100,"name":"Native Game One","playtime_forever":90,"rtime_last_played":1000},{"appid":200,"name":"Native Game Two","playtime_forever":0,"rtime_last_played":2000}]}}"#,
+            ),
+            (
+                "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+                r#"{"response":{"player_level":7}}"#,
+            ),
+            (
+                "IPlayerService/GetRecentlyPlayedGames/v1/?key=k&steamid=id&count=5",
+                r#"{"response":{"games":[{"appid":200,"playtime_forever":0,"playtime_2weeks":15}]}}"#,
+            ),
+        ];
+        let Some(server) = spawn_tls_server(&files, files.len()) else {
+            restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+            return;
+        };
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: true,
+            timeout: Duration::from_secs(3),
+        };
+
+        let stats = run_async(client.fetch_stats_for_appids(&[100, 200, 300], "Native User"))
+            .expect("filtered stats response should parse");
+
+        assert_eq!(stats.username, "Native User");
+        assert_eq!(stats.game_count, 3);
+        assert_eq!(stats.unplayed_count, 1);
+        assert_eq!(stats.total_playtime_minutes, 90);
+        assert_eq!(stats.account_created, Some(2222));
+        assert_eq!(stats.steam_level, Some(7));
+        assert_eq!(
+            stats.avatar_url.as_deref(),
+            Some("https://example.test/native.png")
+        );
+        assert_eq!(stats.top_games[0].name, "Native Game One");
+        assert_eq!(stats.recently_played[0].name, "App 200");
+
+        let achievement_stats = stats.achievement_stats.expect("cached achievements");
+        assert_eq!(achievement_stats.total_achieved, 3);
+        assert_eq!(achievement_stats.total_possible, 6);
+        assert_eq!(achievement_stats.perfect_games, 1);
+        let rarest = achievement_stats.rarest.expect("rarest achievement");
+        assert_eq!(rarest.name, "Missing Game Rare");
+        assert_eq!(rarest.game, "App 300");
+
+        drop(server);
+        restore_xdg_cache_home(previous_cache);
+        let _ = std::fs::remove_dir_all(&cache_root);
     }
 
     #[test]
@@ -813,6 +1226,43 @@ mod tests {
     }
 
     #[test]
+    fn test_fetch_stats_propagates_player_fetch_failure() {
+        let client = SteamClient {
+            client: Client::builder()
+                .timeout(Duration::from_secs(1))
+                .resolve("api.steampowered.com", unbound_localhost_addr())
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(1),
+        };
+
+        let err = run_async(client.fetch_stats()).expect_err("player fetch should fail first");
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+    }
+
+    #[test]
+    fn test_fetch_stats_for_appids_propagates_player_fetch_failure() {
+        let client = SteamClient {
+            client: Client::builder()
+                .timeout(Duration::from_secs(1))
+                .resolve("api.steampowered.com", unbound_localhost_addr())
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(1),
+        };
+
+        let err = run_async(client.fetch_stats_for_appids(&[1, 2], "native-user"))
+            .expect_err("player fetch should fail before appid filtering");
+        assert!(err.downcast_ref::<SteamApiError>().is_some());
+    }
+
+    #[test]
     fn test_print_status_does_not_panic() {
         // Writes a CR + clear-line escape + message to stderr; the
         // assertion is simply that it completes without panicking.
@@ -889,6 +1339,30 @@ mod tests {
             )
             .await
         });
+    }
+
+    mod fetch_optional_details_tests {
+        use super::super::*;
+        use super::{run_async, unbound_localhost_addr};
+
+        #[test]
+        fn test_fetch_optional_details_returns_empty_values_when_requests_fail() {
+            let client = SteamClient {
+                client: Client::builder()
+                    .timeout(Duration::from_secs(1))
+                    .resolve("api.steampowered.com", unbound_localhost_addr())
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: true,
+                timeout: Duration::from_secs(1),
+            };
+            let (level, recently_played) = run_async(client.fetch_optional_details());
+
+            assert!(level.is_none());
+            assert!(recently_played.is_empty());
+        }
     }
 
     mod request_with_retry_tests {
@@ -997,6 +1471,52 @@ mod tests {
                 SteamApiError::ApiError { status, message } => {
                     assert_eq!(*status, 400);
                     assert_eq!(message, "bad-input");
+                }
+                other => panic!("unexpected error: {:?}", other),
+            }
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_preserves_empty_api_error_body() {
+            let (url, server) = spawn_n_shot_server(1, 418, "I'm a Teapot", b"");
+            let client = SteamClient::new("k".into(), "id".into());
+            let err = run_async(client.request_with_retry(&url, "empty-body"))
+                .expect_err("non-retryable 418 should produce an API error");
+            assert!(matches!(
+                err.downcast_ref::<SteamApiError>().unwrap(),
+                SteamApiError::ApiError { status: 418, message } if message.is_empty()
+            ));
+            let _ = server.join();
+        }
+
+        #[test]
+        fn test_request_with_retry_defaults_api_error_body_when_read_fails() {
+            // 400 enters classify_http_error's catch-all arm. The server
+            // advertises a body and closes early, so response.text() fails and
+            // unwrap_or_default supplies the empty message.
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let url = format!("http://{}/", addr);
+
+            let server = std::thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 400 Bad Request\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                }
+            });
+
+            let client = SteamClient::new("k".into(), "id".into()).with_timeout(2);
+            let err = run_async(client.request_with_retry(&url, "truncated-400"))
+                .expect_err("truncated 400 body should still classify as ApiError");
+            match err.downcast_ref::<SteamApiError>().unwrap() {
+                SteamApiError::ApiError { status, message } => {
+                    assert_eq!(*status, 400);
+                    assert!(message.is_empty());
                 }
                 other => panic!("unexpected error: {:?}", other),
             }
@@ -1218,23 +1738,288 @@ mod tests {
             assert!(result.is_none());
         }
 
+        #[test]
+        fn test_fetch_game_achievements_builds_counts_and_rarest_from_api_data() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=123&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"Named One"},{"apiname":"ACH_TWO","achieved":0,"name":"Locked"},{"apiname":"ach_three","achieved":1,"name":null}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=123",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"ACH_ONE","percent":12.5},{"name":"ACH_THREE","percent":3.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(123, "Game 123".to_string()))
+                .expect("achievement responses should produce a result");
+
+            assert_eq!(result.achieved, 2);
+            assert_eq!(result.total, 3);
+            let rarest = result.rarest.expect("achieved item has percentage data");
+            assert_eq!(rarest.name, "ach_three");
+            assert_eq!(rarest.game, "Game 123");
+            assert!((rarest.percent - 3.0).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn test_fetch_game_achievements_keeps_counts_when_global_percentages_fail() {
+            let _guard = crate::test_support::lock_env();
+            let files = [(
+                "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=321&l=english",
+                r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"Named One"},{"apiname":"ACH_TWO","achieved":0,"name":"Locked"}]}}"#,
+            )];
+            let Some(server) = super::spawn_tls_server(&files, 2) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(321, "Game 321".to_string()))
+                .expect("player achievement response should still produce a result");
+
+            assert_eq!(result.achieved, 1);
+            assert_eq!(result.total, 2);
+            assert!(result.rarest.is_none());
+        }
+
+        #[test]
+        fn test_fetch_game_achievements_returns_none_when_player_json_is_malformed() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=987&l=english",
+                    r#"{"playerstats":{"achievements":["#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=987",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"ACH_ONE","percent":7.5}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(987, "Game 987".to_string()));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn test_fetch_game_achievements_ignores_malformed_global_json() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=988&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"ACH_ONE","achieved":1,"name":"One"},{"apiname":"ACH_TWO","achieved":0,"name":"Two"}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=988",
+                    r#"{"achievementpercentages":{"achievements":["#,
+                ),
+            ];
+            let server = match super::spawn_tls_server(&files, files.len()) {
+                Some(server) => server,
+                None => return,
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(988, "Game 988".to_string()))
+                .expect("player achievements should still provide counts");
+            assert_eq!(result.achieved, 1);
+            assert_eq!(result.total, 2);
+            assert!(result.rarest.is_none());
+        }
+
+        #[test]
+        fn test_fetch_game_achievements_returns_zero_counts_for_empty_list() {
+            let _guard = crate::test_support::lock_env();
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=654&l=english",
+                    r#"{"playerstats":{"achievements":[]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=654",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"UNUSED","percent":1.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+
+            let result = run_async(client.fetch_game_achievements(654, "Game 654".to_string()))
+                .expect("empty achievement list should still produce counts");
+            let counts = (result.achieved, result.total);
+            let expected_counts = (0, 0);
+            let has_rarest = result.rarest.is_some();
+
+            assert_eq!(counts, expected_counts);
+            assert!(!has_rarest);
+        }
+
+        #[test]
+        fn test_fetch_achievement_stats_fetches_cache_misses_from_api() {
+            let _guard = crate::test_support::lock_env();
+            let cache_root = super::unique_temp_root("achievement-cache-miss");
+            let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+            std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+            let files = [
+                (
+                    "ISteamUserStats/GetPlayerAchievements/v1/?key=k&steamid=id&appid=555&l=english",
+                    r#"{"playerstats":{"achievements":[{"apiname":"FIRST","achieved":1,"name":"First Win"},{"apiname":"SECOND","achieved":1,"name":"Second Win"},{"apiname":"LOCKED","achieved":1,"name":"Locked"}]}}"#,
+                ),
+                (
+                    "ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=555",
+                    r#"{"achievementpercentages":{"achievements":[{"name":"FIRST","percent":20.0},{"name":"SECOND","percent":4.5},{"name":"LOCKED","percent":1.0}]}}"#,
+                ),
+            ];
+            let Some(server) = super::spawn_tls_server(&files, files.len()) else {
+                super::restore_xdg_cache_home(previous_cache);
+                let _ = std::fs::remove_dir_all(&cache_root);
+                return;
+            };
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .resolve("api.steampowered.com", server.addr)
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(3),
+            };
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 1,
+                games: vec![super::make_game(555, Some("Fetched Game"), 9876)],
+            };
+
+            let stats = run_async(client.fetch_achievement_stats(&games))
+                .expect("cache miss should be fetched from the API");
+
+            assert_eq!(stats.total_achieved, 3);
+            assert_eq!(stats.total_possible, 3);
+            assert_eq!(stats.perfect_games, 1);
+            let rarest = stats.rarest.expect("fetched result should include rarest");
+            assert_eq!(rarest.name, "Locked");
+            assert_eq!(rarest.game, "Fetched Game");
+            assert!((rarest.percent - 1.0).abs() < f64::EPSILON);
+
+            drop(server);
+            super::restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+        }
+
+        #[test]
+        fn test_fetch_achievement_stats_skips_game_when_player_achievements_fail() {
+            let _guard = crate::test_support::lock_env();
+            let cache_root = super::unique_temp_root("achievement-player-fetch-fail");
+            let previous_cache = std::env::var("XDG_CACHE_HOME").ok();
+            std::env::set_var("XDG_CACHE_HOME", &cache_root);
+
+            let client = SteamClient {
+                client: reqwest::Client::builder()
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(1))
+                    .resolve("api.steampowered.com", super::unbound_localhost_addr())
+                    .build()
+                    .expect("client should build"),
+                api_key: "k".into(),
+                steam_id: "id".into(),
+                verbose: false,
+                timeout: std::time::Duration::from_secs(1),
+            };
+            let games = super::super::super::models::OwnedGamesData {
+                game_count: 1,
+                games: vec![super::make_game(777, Some("Unavailable Game"), 0)],
+            };
+
+            let stats = run_async(client.fetch_achievement_stats(&games));
+
+            super::restore_xdg_cache_home(previous_cache);
+            let _ = std::fs::remove_dir_all(&cache_root);
+
+            assert!(stats.is_none());
+        }
+
         #[cfg(target_os = "linux")]
         mod cache_hit_tests {
             use super::super::super::*;
             use crate::cache::AchievementCache;
             use crate::steam::models;
+            use crate::test_support::lock_env;
             use std::env;
             use std::path::Path;
-            use std::sync::Mutex;
             use std::time::{SystemTime, UNIX_EPOCH};
-
-            // XDG_CACHE_HOME is process-global; serialize mutations within this
-            // submodule. Other test files (cache.rs, image_display.rs,
-            // display.rs) hold their own ENV_LOCKs — cross-module races are
-            // possible but the test here only asserts on data that came from
-            // *this* test's pre-populated cache, so a stale read would
-            // surface as an assertion failure rather than silent flakiness.
-            static ENV_LOCK: Mutex<()> = Mutex::new(());
 
             struct EnvScope {
                 prev: Option<String>,
@@ -1255,6 +2040,54 @@ mod tests {
                         None => env::remove_var("XDG_CACHE_HOME"),
                     }
                 }
+            }
+
+            #[test]
+            fn test_envscope_drop_restores_previous_xdg_cache_home() {
+                let _guard = lock_env();
+                let outer_prev = env::var("XDG_CACHE_HOME").ok();
+                let sentinel = unique_cache_root("envscope-sentinel");
+                env::set_var("XDG_CACHE_HOME", &sentinel);
+
+                {
+                    let scoped = unique_cache_root("envscope-scoped");
+                    let _scope = EnvScope::set(&scoped);
+                    assert_eq!(
+                        env::var("XDG_CACHE_HOME").unwrap(),
+                        scoped.to_string_lossy()
+                    );
+                }
+
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    sentinel.to_string_lossy()
+                );
+
+                super::super::restore_xdg_cache_home(outer_prev);
+            }
+
+            #[test]
+            fn test_envscope_drop_preserves_outer_xdg_cache_home() {
+                let _guard = lock_env();
+                let original = env::var("XDG_CACHE_HOME").ok();
+                let outer = unique_cache_root("envscope-outer");
+                env::set_var("XDG_CACHE_HOME", &outer);
+
+                {
+                    let scoped = unique_cache_root("envscope-inner");
+                    let _scope = EnvScope::set(&scoped);
+                    assert_eq!(
+                        env::var("XDG_CACHE_HOME").unwrap(),
+                        scoped.to_string_lossy()
+                    );
+                }
+
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), outer.to_string_lossy());
+
+                let outer_value = outer.to_string_lossy().into_owned();
+                super::super::restore_xdg_cache_home(Some(outer_value.clone()));
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), outer_value);
+                super::super::restore_xdg_cache_home(original);
             }
 
             fn unique_cache_root(label: &str) -> std::path::PathBuf {
@@ -1302,7 +2135,7 @@ mod tests {
             where
                 F: Fn(&std::path::Path) -> bool,
             {
-                let _guard = ENV_LOCK.lock().unwrap();
+                let _guard = lock_env();
                 for attempt in 0..5 {
                     let root = unique_cache_root(&format!("{}-{}", label, attempt));
                     let scope = EnvScope::set(&root);
