@@ -1315,6 +1315,8 @@ mod tests {
             // uncovered. Pre-set the variable before constructing an EnvScope
             // so prev = Some(v), forcing Drop to take the restore branch.
             let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-restore-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
 
             let sentinel_root = unique_cache_root("envscope-restore-sentinel");

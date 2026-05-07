@@ -1373,6 +1373,8 @@ mod tests {
             // so prev = None, then verify Drop removes the value we set during
             // the scope.
             let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-none-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
             env::remove_var("XDG_CACHE_HOME");
 
@@ -1397,6 +1399,8 @@ mod tests {
         #[test]
         fn test_envscope_drop_restores_previous_xdg_cache_home() {
             let _guard = lock_env();
+            let outer_root = unique_cache_root("envscope-restore-outer");
+            let _outer_scope = EnvScope::set(&outer_root);
             let outer_prev = env::var("XDG_CACHE_HOME").ok();
             let sentinel_root = unique_cache_root("envscope-restore-sentinel");
             env::set_var("XDG_CACHE_HOME", &sentinel_root);
