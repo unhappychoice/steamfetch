@@ -282,6 +282,31 @@ mod tests {
         }
 
         #[test]
+        fn test_save_default_cache_persists_empty_file() {
+            let _guard = lock_env();
+            let root = unique_cache_root("empty-save");
+            let _scope = EnvScope::set(&root);
+
+            AchievementCache::default().save();
+
+            let path = cache_path().unwrap();
+            assert!(path.exists(), "save() must create an empty cache file");
+            let json = std::fs::read_to_string(&path).expect("empty cache should be readable");
+            let value: serde_json::Value =
+                serde_json::from_str(&json).expect("empty cache should be valid JSON");
+            let games = value
+                .get("games")
+                .and_then(serde_json::Value::as_object)
+                .expect("empty cache JSON should contain a games object");
+            assert!(games.is_empty());
+
+            let loaded = AchievementCache::load();
+            assert!(loaded.get(1, 0).is_none());
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
         fn test_envscope_drop_restores_previous_xdg_cache_home() {
             // Sibling tests start with XDG_CACHE_HOME unset, so EnvScope::Drop
             // only ever runs its `None => env::remove_var(...)` arm. Pre-set
