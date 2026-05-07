@@ -239,6 +239,37 @@ mod tests {
     }
 
     #[test]
+    fn test_demo_stats_fixture_values_are_stable() {
+        let stats = demo_stats();
+        let top_games = stats
+            .top_games
+            .iter()
+            .map(|game| (game.name.as_str(), game.playtime_minutes))
+            .collect::<Vec<_>>();
+        let recently_played = stats
+            .recently_played
+            .iter()
+            .map(|game| (game.name.as_str(), game.playtime_minutes))
+            .collect::<Vec<_>>();
+
+        assert_eq!(stats.game_count, 486);
+        assert_eq!(stats.unplayed_count, 123);
+        assert_eq!(stats.total_playtime_minutes, 170820);
+        assert_eq!(
+            top_games,
+            vec![
+                ("Borderlands 3", 28680),
+                ("Coin Push RPG", 22620),
+                ("DRG Survivor", 15120),
+            ],
+        );
+        assert_eq!(
+            recently_played,
+            vec![("Elden Ring", 1200), ("Hades II", 480)]
+        );
+    }
+
+    #[test]
     fn test_cli_parses_minimum_args() {
         let cli = Cli::try_parse_from(["steamfetch"]).expect("default args should parse");
         assert!(!cli.demo);
