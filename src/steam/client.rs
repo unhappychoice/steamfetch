@@ -2015,6 +2015,54 @@ mod tests {
                 }
             }
 
+            #[test]
+            fn test_envscope_drop_restores_previous_xdg_cache_home() {
+                let _guard = lock_env();
+                let outer_prev = env::var("XDG_CACHE_HOME").ok();
+                let sentinel = unique_cache_root("envscope-sentinel");
+                env::set_var("XDG_CACHE_HOME", &sentinel);
+
+                {
+                    let scoped = unique_cache_root("envscope-scoped");
+                    let _scope = EnvScope::set(&scoped);
+                    assert_eq!(
+                        env::var("XDG_CACHE_HOME").unwrap(),
+                        scoped.to_string_lossy()
+                    );
+                }
+
+                assert_eq!(
+                    env::var("XDG_CACHE_HOME").unwrap(),
+                    sentinel.to_string_lossy()
+                );
+
+                super::super::restore_xdg_cache_home(outer_prev);
+            }
+
+            #[test]
+            fn test_envscope_drop_preserves_outer_xdg_cache_home() {
+                let _guard = lock_env();
+                let original = env::var("XDG_CACHE_HOME").ok();
+                let outer = unique_cache_root("envscope-outer");
+                env::set_var("XDG_CACHE_HOME", &outer);
+
+                {
+                    let scoped = unique_cache_root("envscope-inner");
+                    let _scope = EnvScope::set(&scoped);
+                    assert_eq!(
+                        env::var("XDG_CACHE_HOME").unwrap(),
+                        scoped.to_string_lossy()
+                    );
+                }
+
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), outer.to_string_lossy());
+
+                let outer_value = outer.to_string_lossy().into_owned();
+                super::super::restore_xdg_cache_home(Some(outer_value.clone()));
+                assert_eq!(env::var("XDG_CACHE_HOME").unwrap(), outer_value);
+                super::super::restore_xdg_cache_home(original);
+            }
+
             fn unique_cache_root(label: &str) -> std::path::PathBuf {
                 let nanos = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
