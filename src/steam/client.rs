@@ -876,6 +876,33 @@ mod tests {
     }
 
     #[test]
+    fn test_fetch_steam_level_returns_none_for_null_level() {
+        let _guard = crate::test_support::lock_env();
+        let server = spawn_tls_one_shot_server(
+            "IPlayerService/GetSteamLevel/v1/?key=k&steamid=id",
+            r#"{"response":{"player_level":null}}"#,
+        )
+        .expect("TLS test server should start");
+        let client = SteamClient {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .timeout(Duration::from_secs(3))
+                .resolve("api.steampowered.com", server.addr)
+                .build()
+                .expect("client should build"),
+            api_key: "k".into(),
+            steam_id: "id".into(),
+            verbose: false,
+            timeout: Duration::from_secs(3),
+        };
+
+        let level = run_async(client.fetch_steam_level()).expect("steam level should parse");
+
+        assert_eq!(level, None);
+    }
+
+    #[test]
     fn test_fetch_stats_builds_success_response_from_api_data() {
         let _guard = crate::test_support::lock_env();
         let cache_root = unique_temp_root("fetch-stats-success-cache");
