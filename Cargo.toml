@@ -21,7 +21,7 @@ colored = "2"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
-steamworks = { version = "0.12", features = ["raw-bindings"] }
+steamworks = { version = "0.13", features = ["raw-bindings"] }
 libloading = "0.8"
 indicatif = "0.18"
 image = "0.25"
