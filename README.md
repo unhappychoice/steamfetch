@@ -229,9 +229,9 @@ ISC License - see [LICENSE](LICENSE) for details.
 If you find this project useful, please consider:
 
 - ⭐️ [Star on GitHub](https://github.com/unhappychoice/steamfetch)
-- 🐦 [Share on X](https://x.com/intent/post?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F&url=https%3A//github.com/unhappychoice/steamfetch&hashtags=steamfetch)
-- 🦋 [Share on Bluesky](https://bsky.app/intent/compose?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F%20%23steamfetch%20https%3A//github.com/unhappychoice/steamfetch)
-- 🧵 [Share on Threads](https://www.threads.net/intent/post?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F%20%23steamfetch%20https%3A//github.com/unhappychoice/steamfetch)
+- 🐦 [Share on X](https://x.com/intent/post?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F&url=https%3A//github.com/unhappychoice/steamfetch&hashtags=steamfetch,CLI,Rust,Steam)
+- 🦋 [Share on Bluesky](https://bsky.app/intent/compose?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F%20%23steamfetch%20%23CLI%20%23Rust%20%23Steam%20https%3A//github.com/unhappychoice/steamfetch)
+- 🧵 [Share on Threads](https://www.threads.net/intent/post?text=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F%20%23steamfetch%20%23CLI%20%23Rust%20%23Steam%20https%3A//github.com/unhappychoice/steamfetch)
 - 💼 [Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A//github.com/unhappychoice/steamfetch)
 - 📘 [Share on Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A//github.com/unhappychoice/steamfetch)
 - 🟧 [Submit to Hacker News](https://news.ycombinator.com/submitlink?u=https%3A//github.com/unhappychoice/steamfetch&t=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F)
