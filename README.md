@@ -235,5 +235,7 @@ If you find this project useful, please consider:
 - 💼 [Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A//github.com/unhappychoice/steamfetch)
 - 📘 [Share on Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A//github.com/unhappychoice/steamfetch)
 - 🟧 [Submit to Hacker News](https://news.ycombinator.com/submitlink?u=https%3A//github.com/unhappychoice/steamfetch&t=steamfetch%3A%20see%20your%20hours%20played%2C%20library%2C%20and%20Steam%20profile%20right%20in%20your%20terminal%20%F0%9F%95%B9%EF%B8%8F)
+- 💬 Drop it into your Discord server or gaming chat
+- ✍️ Write about it on your blog or in a newsletter
 
 Every bit of support helps. Thanks!
