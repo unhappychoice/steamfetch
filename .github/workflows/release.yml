@@ -27,7 +27,7 @@ jobs:
       new_version: ${{ steps.version.outputs.new_version }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
@@ -113,7 +113,7 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.new_version }}
       - uses: dtolnay/rust-toolchain@stable
@@ -182,7 +182,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [release, build-and-upload]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.new_version }}
       - uses: dtolnay/rust-toolchain@stable
@@ -196,7 +196,7 @@ jobs:
     needs: [release, build-and-upload]
     steps:
       - name: Checkout homebrew tap
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: unhappychoice/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
