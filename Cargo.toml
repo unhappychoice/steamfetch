@@ -25,7 +25,7 @@ steamworks = { version = "0.13", features = ["raw-bindings"] }
 libloading = "0.9"
 indicatif = "0.18"
 image = "0.25"
-icy_sixel = "0.6"
+icy_sixel = "0.7"
 base64 = "0.23.0"
 libc = "0.2.186"
 terminal_size = "0.4"
