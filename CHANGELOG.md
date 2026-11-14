@@ -5,11 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-11-14
+
+### Other Changes
+
+- chore: bump version to v0.5.7 ([928f8e3](https://github.com/unhappychoice/steamfetch/commit/928f8e3))
+- chore(deps): bump toml from 1.2.0+spec-1.1.0 to 1.2.1+spec-1.1.0 ([12346f0](https://github.com/unhappychoice/steamfetch/commit/12346f0))
+- chore(deps): bump toml from 1.1.8+spec-1.1.0 to 1.2.0+spec-1.1.0 ([0ddc4a3](https://github.com/unhappychoice/steamfetch/commit/0ddc4a3))
+- chore(deps): bump unicode-width from 0.2.2 to 0.2.3 ([d6ad065](https://github.com/unhappychoice/steamfetch/commit/d6ad065))
+- chore(deps): bump libc from 0.2.190 to 0.2.191 ([81970b1](https://github.com/unhappychoice/steamfetch/commit/81970b1))
+- chore(deps): bump serde_json from 1.0.153 to 1.0.154 ([3e9b53c](https://github.com/unhappychoice/steamfetch/commit/3e9b53c))
+- chore(deps): bump serde_json from 1.0.151 to 1.0.153 ([f358950](https://github.com/unhappychoice/steamfetch/commit/f358950))
+- chore(deps): bump toml from 1.1.6+spec-1.1.0 to 1.1.8+spec-1.1.0 ([91b1412](https://github.com/unhappychoice/steamfetch/commit/91b1412))
+- chore(deps): bump libc from 0.2.189 to 0.2.190 ([c9c3160](https://github.com/unhappychoice/steamfetch/commit/c9c3160))
+- chore(deps): bump thiserror from 2.0.20 to 2.0.21 ([611b8d1](https://github.com/unhappychoice/steamfetch/commit/611b8d1))
+- chore(deps): bump reqwest from 0.13.4 to 0.13.5 ([b22f5ea](https://github.com/unhappychoice/steamfetch/commit/b22f5ea))
+- chore(deps): bump toml from 1.1.5+spec-1.1.0 to 1.1.6+spec-1.1.0 ([8890314](https://github.com/unhappychoice/steamfetch/commit/8890314))
+- chore(deps): bump icy_sixel from 0.6.0 to 0.7.0 ([fa2bb15](https://github.com/unhappychoice/steamfetch/commit/fa2bb15))
+- chore(deps): bump dirs from 6.0.0 to 7.0.0 ([0ad73e0](https://github.com/unhappychoice/steamfetch/commit/0ad73e0))
+- chore(deps): bump toml from 1.1.4+spec-1.1.0 to 1.1.5+spec-1.1.0 ([224b808](https://github.com/unhappychoice/steamfetch/commit/224b808))
+- chore(deps): bump icy_sixel from 0.5.1 to 0.6.0 ([add4c36](https://github.com/unhappychoice/steamfetch/commit/add4c36))
+- chore(deps): bump futures from 0.3.33 to 0.3.34 ([18a2a03](https://github.com/unhappychoice/steamfetch/commit/18a2a03))
+- chore(deps): bump icy_sixel from 0.5.0 to 0.5.1 ([05d9164](https://github.com/unhappychoice/steamfetch/commit/05d9164))
+- chore(deps): bump thiserror from 2.0.19 to 2.0.20 ([1f4bbab](https://github.com/unhappychoice/steamfetch/commit/1f4bbab))
+- chore(ci): use personal git identity for automated commits ([2312c21](https://github.com/unhappychoice/steamfetch/commit/2312c21))
+- chore(deps): bump base64 from 0.23.0 to 0.23.1 ([f79ab88](https://github.com/unhappychoice/steamfetch/commit/f79ab88))
+- chore(deps): bump toml from 1.1.3+spec-1.1.0 to 1.1.4+spec-1.1.0 ([980249d](https://github.com/unhappychoice/steamfetch/commit/980249d))
+
+
 ## [0.5.6] - 2026-07-25
 
 ### Other Changes
 
-- chore: bump version to v0.5.6 ([7464c07](https://github.com/unhappychoice/steamfetch/commit/7464c07))
+- chore: bump version to v0.5.6 ([c14b445](https://github.com/unhappychoice/steamfetch/commit/c14b445))
 - chore(deps): bump base64 from 0.22.1 to 0.23.0 ([3b461e7](https://github.com/unhappychoice/steamfetch/commit/3b461e7))
 - chore(deps): bump libc from 0.2.187 to 0.2.189 ([96d7ef3](https://github.com/unhappychoice/steamfetch/commit/96d7ef3))
 - chore(deps): bump serde_json from 1.0.150 to 1.0.151 ([ab19a06](https://github.com/unhappychoice/steamfetch/commit/ab19a06))
@@ -382,20 +410,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.1] - 2026-02-05
 
-### Bug Fixes
-
-- fix: use autostash for git pull in release workflow ([fbb3c39](https://github.com/unhappychoice/steamfetch/commit/fbb3c39))
-- fix: stage changes before git pull in release workflow ([8612b18](https://github.com/unhappychoice/steamfetch/commit/8612b18))
-- fix: pull latest before committing in release workflow ([202de07](https://github.com/unhappychoice/steamfetch/commit/202de07))
-
-### Other Changes
-
-- chore: bump version to v0.2.1 ([b8a5d04](https://github.com/unhappychoice/steamfetch/commit/b8a5d04))
-- ci: remove ARM64 Linux from release targets (Steam unsupported) ([75165f1](https://github.com/unhappychoice/steamfetch/commit/75165f1))
-
-
-## [0.2.0] - 2026-02-05
-
 ### Features
 
 - feat: add install script ([9865868](https://github.com/unhappychoice/steamfetch/commit/9865868))
@@ -414,10 +428,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+- fix: use autostash for git pull in release workflow ([fbb3c39](https://github.com/unhappychoice/steamfetch/commit/fbb3c39))
+- fix: stage changes before git pull in release workflow ([8612b18](https://github.com/unhappychoice/steamfetch/commit/8612b18))
+- fix: pull latest before committing in release workflow ([202de07](https://github.com/unhappychoice/steamfetch/commit/202de07))
 - fix: remove unused fields and fix clippy warnings ([48f9f4f](https://github.com/unhappychoice/steamfetch/commit/48f9f4f))
 
 ### Other Changes
 
+- chore: bump version to v0.2.1 ([b8a5d04](https://github.com/unhappychoice/steamfetch/commit/b8a5d04))
+- ci: remove ARM64 Linux from release targets (Steam unsupported) ([75165f1](https://github.com/unhappychoice/steamfetch/commit/75165f1))
 - chore: bump version to v0.2.0 ([a504f2a](https://github.com/unhappychoice/steamfetch/commit/a504f2a))
 - ci: add release and CI workflows ([f1f81da](https://github.com/unhappychoice/steamfetch/commit/f1f81da))
 - chore: update demo stats with new fields ([da76d9f](https://github.com/unhappychoice/steamfetch/commit/da76d9f))
