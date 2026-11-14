@@ -5,11 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-11-14
+
+### Bug Fixes
+
+- fix(ci): find Steam API library in Cargo's new build-dir layout ([180a219](https://github.com/unhappychoice/steamfetch/commit/180a219))
+
+### Other Changes
+
+- chore: bump version to v0.5.8 ([4c31dd2](https://github.com/unhappychoice/steamfetch/commit/4c31dd2))
+- style: fix needless_bool lint from Rust 1.100 clippy ([889071f](https://github.com/unhappychoice/steamfetch/commit/889071f))
+
+
 ## [0.5.7] - 2026-11-14
 
 ### Other Changes
 
-- chore: bump version to v0.5.7 ([928f8e3](https://github.com/unhappychoice/steamfetch/commit/928f8e3))
+- chore: bump version to v0.5.7 ([eb52b91](https://github.com/unhappychoice/steamfetch/commit/eb52b91))
 - chore(deps): bump toml from 1.2.0+spec-1.1.0 to 1.2.1+spec-1.1.0 ([12346f0](https://github.com/unhappychoice/steamfetch/commit/12346f0))
 - chore(deps): bump toml from 1.1.8+spec-1.1.0 to 1.2.0+spec-1.1.0 ([0ddc4a3](https://github.com/unhappychoice/steamfetch/commit/0ddc4a3))
 - chore(deps): bump unicode-width from 0.2.2 to 0.2.3 ([d6ad065](https://github.com/unhappychoice/steamfetch/commit/d6ad065))
@@ -402,16 +414,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 - feat: bundle Steam API library with release binaries ([2df0cde](https://github.com/unhappychoice/steamfetch/commit/2df0cde))
-
-### Other Changes
-
-- chore: bump version to v0.2.2 ([b52ccb6](https://github.com/unhappychoice/steamfetch/commit/b52ccb6))
-
-
-## [0.2.1] - 2026-02-05
-
-### Features
-
 - feat: add install script ([9865868](https://github.com/unhappychoice/steamfetch/commit/9865868))
 - feat: add recently played games and adjust line width ([e1f5e4d](https://github.com/unhappychoice/steamfetch/commit/e1f5e4d))
 - feat: improve error messages with setup instructions ([7a4eb9b](https://github.com/unhappychoice/steamfetch/commit/7a4eb9b))
@@ -435,6 +437,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other Changes
 
+- chore: bump version to v0.2.2 ([b52ccb6](https://github.com/unhappychoice/steamfetch/commit/b52ccb6))
 - chore: bump version to v0.2.1 ([b8a5d04](https://github.com/unhappychoice/steamfetch/commit/b8a5d04))
 - ci: remove ARM64 Linux from release targets (Steam unsupported) ([75165f1](https://github.com/unhappychoice/steamfetch/commit/75165f1))
 - chore: bump version to v0.2.0 ([a504f2a](https://github.com/unhappychoice/steamfetch/commit/a504f2a))
