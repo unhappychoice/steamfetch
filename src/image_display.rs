@@ -243,10 +243,7 @@ fn is_sixel_capable_terminal() -> bool {
             return true;
         }
     }
-    if std::env::var("XTERM_VERSION").is_ok() {
-        return true;
-    }
-    false
+    std::env::var("XTERM_VERSION").is_ok()
 }
 
 // --- Protocol output ---

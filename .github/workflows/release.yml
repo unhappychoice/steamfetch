@@ -128,7 +128,7 @@ jobs:
         run: |
           RELEASE_DIR=target/${{ matrix.target }}/release
           if [ ! -f "$RELEASE_DIR/libsteam_api.so" ]; then
-            STEAM_API_SO=$(find target -name "libsteam_api.so" -not -path "$RELEASE_DIR/*" | head -1)
+            STEAM_API_SO=$(find target -name "libsteam_api.so" | head -1)
             cp "$STEAM_API_SO" "$RELEASE_DIR/"
           fi
           cd "$RELEASE_DIR"
@@ -138,7 +138,7 @@ jobs:
         run: |
           RELEASE_DIR=target/${{ matrix.target }}/release
           if [ ! -f "$RELEASE_DIR/libsteam_api.dylib" ]; then
-            STEAM_API_DYLIB=$(find target -name "libsteam_api.dylib" -not -path "$RELEASE_DIR/*" | head -1)
+            STEAM_API_DYLIB=$(find target -name "libsteam_api.dylib" | head -1)
             cp "$STEAM_API_DYLIB" "$RELEASE_DIR/"
           fi
           cd "$RELEASE_DIR"
