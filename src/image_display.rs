@@ -367,6 +367,14 @@ fn save_to_cache(key: &str, img: &DynamicImage) {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    static STDOUT_FD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(unix)]
+    fn lock_stdout_fd() -> std::sync::MutexGuard<'static, ()> {
+        STDOUT_FD_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_sanitize_cache_key_keeps_alphanumeric() {
         assert_eq!(sanitize_cache_key("abcDEF123"), "abcDEF123");
@@ -445,6 +453,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_query_cell_size_ioctl_does_not_panic_on_captured_stdout() {
+        let _lock = lock_stdout_fd();
         // Under `cargo test` the test binary's stdout is captured by the
         // runner, so `ioctl(STDOUT_FILENO, TIOCGWINSZ, ...)` typically
         // returns -1 and the function short-circuits to None. Exercises
@@ -460,6 +469,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_query_cell_size_ioctl_uses_stdout_pixel_dimensions() {
+        let _lock = lock_stdout_fd();
         struct StdoutGuard {
             saved_stdout: i32,
             master: i32,
@@ -698,6 +708,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_query_cell_size_uses_default_without_terminal_size() {
+        let _lock = lock_stdout_fd();
         assert_eq!(query_cell_size(), (10, 20));
     }
 
